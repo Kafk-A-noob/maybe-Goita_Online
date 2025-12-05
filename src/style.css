@@ -1,0 +1,309 @@
+/* Reset & Base */
+:root {
+  --wood-primary: #d4a76a;
+  --wood-dark: #5c3a1e;
+  --wood-light: #f3e5ab;
+  --text-color: #2c1a0e;
+  --card-width: 40px;
+  /* Slightly smaller to fit */
+  --card-height: 50px;
+  --accent-team0: #c0392b;
+  --accent-team1: #2980b9;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  font-family: "Hiragino Mincho ProN", "Yu Mincho", serif;
+  background-color: #1a1a1a;
+  color: var(--text-color);
+  user-select: none;
+  overflow: hidden;
+  height: 100vh;
+  width: 100vw;
+  display: flex;
+  flex-direction: column;
+}
+
+#app {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+}
+
+/* Ensure container fills app */
+#game-container {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  padding: 10px;
+}
+
+/* 3x3 Grid Layout for the Board */
+#game-board {
+  flex: 1;
+  position: relative;
+  background-color: var(--wood-primary);
+  background-image: radial-gradient(circle at center, #e6b980 0%, #d4a76a 100%);
+  box-shadow: inset 0 0 50px rgba(0, 0, 0, 0.5);
+  border-radius: 12px;
+  border: 10px solid var(--wood-dark);
+
+  display: grid;
+  grid-template-columns: 250px 1fr 250px;
+  grid-template-rows: 200px 1fr 200px;
+  /* Top, Middle, Bottom */
+  grid-template-areas:
+    "corner-tl player-2 corner-tr"
+    "player-1 info     player-3"
+    "corner-bl player-0 corner-br";
+  gap: 5px;
+}
+
+/* Player Areas (Global) */
+.player-area {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 5px;
+  position: relative;
+}
+
+#player-0 {
+  grid-area: player-0;
+}
+
+#player-1 {
+  grid-area: player-1;
+}
+
+#player-2 {
+  grid-area: player-2;
+  flex-direction: column-reverse;
+}
+
+/* Partner at top */
+#player-3 {
+  grid-area: player-3;
+}
+
+/* Center Info (Global) */
+#center-info {
+  grid-area: info;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.05);
+  border-radius: 50%;
+}
+
+.score-board {
+  background: rgba(255, 255, 255, 0.95);
+  padding: 10px 20px;
+  border-radius: 8px;
+  font-size: 16px;
+  text-align: center;
+  box-shadow: 0 4px 8px rgba(0, 0, 0, 0.2);
+}
+
+.team-score {
+  font-weight: bold;
+  margin: 2px;
+}
+
+.team-score.team-0 {
+  color: var(--accent-team0);
+  border-bottom: 2px solid var(--accent-team0);
+}
+
+.team-score.team-1 {
+  color: var(--accent-team1);
+  border-bottom: 2px solid var(--accent-team1);
+}
+
+/* Field Areas (Rows) */
+.field-area {
+  background: rgba(0, 0, 0, 0.1);
+  border-radius: 6px;
+  padding: 5px;
+  margin: 5px;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  align-items: center;
+  min-width: 200px;
+  min-height: 80px;
+}
+
+.row-receive,
+.row-attack {
+  display: flex;
+  gap: 4px;
+  height: 40px;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+}
+
+.row-receive {
+  border-bottom: 1px dashed rgba(255, 255, 255, 0.2);
+}
+
+/* Hands */
+.hand {
+  display: flex;
+  gap: 4px;
+  padding: 5px;
+  background: rgba(255, 255, 255, 0.1);
+  border-radius: 6px;
+  margin: 5px;
+  flex-wrap: wrap;
+  justify-content: center;
+}
+
+.team-0 .hand {
+  border: 2px solid var(--accent-team0);
+}
+
+.team-1 .hand {
+  border: 2px solid var(--accent-team1);
+}
+
+/* Cards */
+.card {
+  width: var(--card-width);
+  height: var(--card-height);
+  background-color: var(--wood-light);
+  border: 1px solid var(--wood-dark);
+  border-radius: 3px;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  font-size: 20px;
+  font-weight: bold;
+  cursor: pointer;
+  box-shadow: 1px 1px 3px rgba(0, 0, 0, 0.3);
+}
+
+.card:hover {
+  transform: translateY(-2px);
+}
+
+.card.hidden {
+  background: var(--wood-dark);
+  color: transparent;
+  border: 1px solid #3e2714;
+}
+
+.card.selected {
+  border: 2px solid red;
+  transform: translateY(-5px);
+}
+
+.card.small {
+  width: 30px;
+  height: 38px;
+  font-size: 14px;
+}
+
+/* Bubbles */
+.status-bubble {
+  position: absolute;
+  background: white;
+  border: 1px solid #333;
+  padding: 2px 8px;
+  border-radius: 10px;
+  font-size: 12px;
+  opacity: 0;
+  transition: opacity 0.5s;
+  pointer-events: none;
+  z-index: 100;
+  white-space: nowrap;
+}
+
+.status-bubble.show {
+  opacity: 1;
+}
+
+#player-0 .status-bubble {
+  top: -10px;
+}
+
+#player-2 .status-bubble {
+  bottom: -10px;
+}
+
+#player-1 .status-bubble {
+  right: -10px;
+}
+
+#player-3 .status-bubble {
+  left: -10px;
+}
+
+/* Name Tags */
+.name-tag {
+  background: var(--wood-dark);
+  color: #fff;
+  padding: 2px 8px;
+  border-radius: 4px;
+  font-size: 14px;
+  margin-bottom: 2px;
+  box-shadow: 1px 1px 2px rgba(0, 0, 0, 0.5);
+  z-index: 5;
+}
+
+/* Controls */
+#controls {
+  position: absolute;
+  bottom: 20px;
+  right: 20px;
+  display: flex;
+  gap: 10px;
+  z-index: 200;
+}
+
+button {
+  background: var(--wood-dark);
+  color: #fff;
+  border: none;
+  padding: 10px 20px;
+  border-radius: 6px;
+  font-size: 16px;
+  cursor: pointer;
+  box-shadow: 2px 2px 5px rgba(0, 0, 0, 0.5);
+}
+
+button:hover {
+  background: #6b4320;
+}
+
+button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+#log-short {
+  margin-top: 5px;
+  color: #fff;
+  font-weight: bold;
+  text-shadow: 0 1px 2px black;
+  height: 20px;
+}
+
+/* Responsive adjustments */
+@media (max-width: 800px) {
+  #game-board {
+    grid-template-columns: 100px 1fr 100px;
+    grid-template-rows: 150px 1fr 150px;
+  }
+}
