@@ -16,13 +16,13 @@ export class GoitaBoard {
     this.roundCount = 1;
 
     this.isNetworkGame = false;
-    this.localPlayerIndex = 0; // Default for Single Player
+    this.localPlayerIndex = -1; // Default -1 (Invalid) until identified
+    this.isSubscribedToActions = false;
 
     // Network Callbacks
     if (this.network) {
       this.network.onGameStart = () => this.startNetworkGame();
-      // Listen for actions
-      this.network.subscribeToGameActions((action) => this.handleRemoteAction(action));
+      // Listen for actions - MOVED to startNetworkGame
     }
   }
 
@@ -39,6 +39,14 @@ export class GoitaBoard {
   // === Network Game Start ===
   async startNetworkGame() {
     this.isNetworkGame = true;
+
+    // Subscribe to Actions if not already
+    if (!this.isSubscribedToActions) {
+      this.renderer.logNetwork(`Subscribing to Actions for Room: ${this.network.currentRoomId}`);
+      this.network.subscribeToGameActions((action) => this.handleRemoteAction(action));
+      this.isSubscribedToActions = true;
+    }
+
     this.renderer.setupGameUI(); // Switch to Game View
 
     if (this.network.isHost) {
@@ -110,6 +118,7 @@ export class GoitaBoard {
       // Identify Myself
       if (pData.id === this.network.playerId) {
         console.log(`Identified myself as Player ${index}`);
+        this.renderer.log(`ID一致: プレイヤー ${index} として参加`);
         this.localPlayerIndex = index;
         p.isHuman = true; // I am human
       }
@@ -121,10 +130,15 @@ export class GoitaBoard {
       console.log("I am Host (Player 0)");
     }
 
+    if (this.localPlayerIndex === -1) {
+      this.renderer.log("エラー: プレイヤーIDが見つかりません (観戦モード)");
+    }
+
+    this.renderer.setLocalPlayer(this.localPlayerIndex);
     this.renderer.updateNameTags();
   }
 
-  nextRound(winnerId) {
+  async nextRound(winnerId) {
     this.roundCount++;
     this.gameOver = false;
     this.turnPlayerIndex = winnerId;
@@ -141,10 +155,24 @@ export class GoitaBoard {
       this.nextTurn();
     } else {
       // Network Round Reset
+      this.renderer.log("次のラウンドの準備中...");
+
+      // 1. Set Ready
+      await this.network.setReadyForNextRound(true);
+
       if (this.network.isHost) {
-        this.startNetworkGame(); // Re-deal and send state
+        this.renderer.log("全員の準備完了を待っています...");
+        // 2. Wait for everyone
+        await this.network.waitForAllPlayersReady();
+
+        // 3. Reset Ready Flags
+        await this.network.resetAllPlayersReady();
+
+        // 4. Start New Round
+        this.startNetworkGame();
       } else {
-        this.renderer.log(`次のラウンドを待機中...`);
+        this.renderer.log("ホストの開始を待っています...");
+        // Guest just waits for startNetworkGame triggered by InitialState update
       }
     }
   }
@@ -229,29 +257,28 @@ export class GoitaBoard {
     // 1. Validate & Execute Locally
     const result = await this.executeActionLogic(player, action);
 
-    if (result.valid && this.isNetworkGame) {
+    if (this.isNetworkGame) {
       // 2. Send to Network
-      // Convert Cards to simple objects if needed, but JSON.stringify handles it usually.
-      // But to be safe:
       const cleanAction = { ...action, playerIndex: player.id };
       if (cleanAction.card1) cleanAction.card1 = { type: cleanAction.card1.type, id: cleanAction.card1.id };
       if (cleanAction.card2) cleanAction.card2 = { type: cleanAction.card2.type, id: cleanAction.card2.id };
 
+      this.renderer.logNetwork(`Sending Action: P${player.id} ${action.action}`);
       this.network.sendGameAction(cleanAction);
     }
     return result;
   }
 
   async handleRemoteAction(remoteAction) {
-    console.log("Received Remote Action:", remoteAction);
-    console.log(`My Index: ${this.localPlayerIndex}, Action Index: ${remoteAction.playerIndex}, My ID: ${this.network.playerId}, Action ID: ${remoteAction.playerId}`);
+    this.renderer.logNetwork(`Received Action: P${remoteAction.playerIndex} ${remoteAction.action}`);
+    // console.log("Received Remote Action:", remoteAction);
 
     if (remoteAction.playerIndex === this.localPlayerIndex) {
-      console.log("Ignoring my own action (by index)");
+      this.renderer.logNetwork(`IGNORED (Self Index: ${this.localPlayerIndex})`);
       return;
     }
     if (remoteAction.playerId === this.network.playerId) {
-      console.log("Ignoring my own action (by ID)");
+      this.renderer.logNetwork(`IGNORED (Self ID)`);
       return;
     }
 
@@ -296,12 +323,14 @@ export class GoitaBoard {
 
         this.renderer.log(`プレイヤー ${player.id} 攻め: [伏せ] -> ${card2.type}`);
         this.renderer.showPlay(player.id, card1, card2, true);
-        this.renderer.render(this);
 
         this.currentAttack = { playerIndex: player.id, card: card2 };
         this.passCount = 0;
 
+        this.renderer.render(this);
+
         const roundEnded = await this.checkWin(player);
+
         if (!this.gameOver && !roundEnded) {
           this.turnPlayerIndex = (this.turnPlayerIndex + 1) % 4;
           this.nextTurn();
@@ -328,14 +357,16 @@ export class GoitaBoard {
 
         this.renderer.log(`プレイヤー ${player.id} 受け・攻め: ${card1.type} -> ${card2.type}`);
         this.renderer.showPlay(player.id, card1, card2, false);
-        this.renderer.render(this);
 
         this.currentAttack = { playerIndex: player.id, card: card2 };
         this.passCount = 0;
 
+        this.renderer.render(this);
+
         const isDouble = (card1.type === card2.type);
 
         const roundEnded = await this.checkWin(player, isDouble);
+
         if (!this.gameOver && !roundEnded) {
           this.turnPlayerIndex = (this.turnPlayerIndex + 1) % 4;
           this.nextTurn();

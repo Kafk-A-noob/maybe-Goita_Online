@@ -77,21 +77,21 @@ body {
   position: relative;
 }
 
-#player-0 {
+/* Map classes to grid areas */
+.player-bottom {
   grid-area: player-0;
 }
 
-#player-1 {
+.player-left {
   grid-area: player-1;
 }
 
-#player-2 {
+.player-top {
   grid-area: player-2;
   flex-direction: column-reverse;
 }
 
-/* Partner at top */
-#player-3 {
+.player-right {
   grid-area: player-3;
 }
 
@@ -234,19 +234,19 @@ body {
   opacity: 1;
 }
 
-#player-0 .status-bubble {
+.player-bottom .status-bubble {
   top: -10px;
 }
 
-#player-2 .status-bubble {
+.player-top .status-bubble {
   bottom: -10px;
 }
 
-#player-1 .status-bubble {
+.player-left .status-bubble {
   right: -10px;
 }
 
-#player-3 .status-bubble {
+.player-right .status-bubble {
   left: -10px;
 }
 

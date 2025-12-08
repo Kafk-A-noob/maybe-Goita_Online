@@ -1,5 +1,5 @@
 import { initializeApp } from "firebase/app";
-import { getDatabase, ref, set, onValue, update, get, child, push, onDisconnect, onChildAdded } from "firebase/database";
+import { getDatabase, ref, set, onValue, update, get, child, push, onDisconnect, onChildAdded, remove } from "firebase/database";
 
 // TODO: USER MUST UPDATE THIS CONFIG
 const firebaseConfig = {
@@ -23,7 +23,7 @@ export class NetworkManager {
       this.initialized = false;
     }
 
-    this.playerId = this.generatePlayerId();
+    this.playerId = this.getPlayerId();
     this.playerName = "Player";
     this.currentRoomId = null;
     this.isHost = false;
@@ -34,8 +34,20 @@ export class NetworkManager {
     this.onGameStart = null;  // () => {}
   }
 
-  generatePlayerId() {
-    return 'user_' + Math.random().toString(36).substr(2, 9);
+  getPlayerId() {
+    let id = sessionStorage.getItem('goita_playerId');
+    if (!id) {
+      id = 'user_' + Math.random().toString(36).substr(2, 9);
+      sessionStorage.setItem('goita_playerId', id);
+    }
+    return id;
+  }
+
+  resetPlayerId() {
+    sessionStorage.removeItem('goita_playerId');
+    this.playerId = this.getPlayerId();
+    console.log("Player ID Reset:", this.playerId);
+    return this.playerId;
   }
 
   generateRoomCode() {
@@ -106,32 +118,44 @@ export class NetworkManager {
       }
 
       const roomData = snapshot.val();
-      if (roomData.status !== 'waiting') {
-        return { success: false, error: "ゲームは既に始まっています" };
+      if (roomData.status !== 'waiting' && roomData.status !== 'playing') {
+        // Allow rejoin if playing?
+        // For now, strict check unless we are rejoining.
       }
 
       const players = roomData.players || {};
-      const playerCount = Object.keys(players).length;
 
-      if (playerCount >= 4) {
-        return { success: false, error: "部屋は満員です" };
-      }
+      // Check if I am already in the room (Rejoin)
+      let myIndex = -1;
+      if (players[this.playerId]) {
+        myIndex = players[this.playerId].index;
+        console.log("Rejoining as Player", myIndex);
+      } else {
+        // New Join
+        const playerCount = Object.keys(players).length;
+        if (playerCount >= 4) {
+          return { success: false, error: "部屋は満員です" };
+        }
 
-      // Determine Index (0-3)
-      const usedIndices = Object.values(players).map(p => p.index);
-      let newIndex = -1;
-      for (let i = 0; i < 4; i++) {
-        if (!usedIndices.includes(i)) {
-          newIndex = i;
-          break;
+        if (roomData.status !== 'waiting') {
+          return { success: false, error: "ゲームは既に始まっています" };
+        }
+
+        // Determine Index (0-3)
+        const usedIndices = Object.values(players).map(p => p.index);
+        for (let i = 0; i < 4; i++) {
+          if (!usedIndices.includes(i)) {
+            myIndex = i;
+            break;
+          }
         }
       }
 
-      // Add Player
+      // Add/Update Player
       const newPlayer = {
         name: playerName,
         id: this.playerId,
-        index: newIndex,
+        index: myIndex,
         isHost: false,
         isReady: true
       };
@@ -142,7 +166,8 @@ export class NetworkManager {
       onDisconnect(ref(this.db, `rooms/${code}/players/${this.playerId}`)).remove();
 
       this.listenToRoom();
-      return { success: true, index: newIndex };
+      return { success: true, index: myIndex };
+
 
     } catch (e) {
       console.error(e);
@@ -203,6 +228,9 @@ export class NetworkManager {
       await update(roomRef, updates);
     }
 
+    // Clear previous actions to prevent ghost replays
+    await remove(ref(this.db, `rooms/${this.currentRoomId}/actions`));
+
     // Start Game
     await update(roomRef, { status: 'playing' });
   }
@@ -242,6 +270,44 @@ export class NetworkManager {
     onChildAdded(actionsRef, (snapshot) => {
       const action = snapshot.val();
       if (action) callback(action);
+    });
+  }
+
+  // === Round Synchronization ===
+
+  async setReadyForNextRound(isReady) {
+    if (!this.currentRoomId) return;
+    await update(ref(this.db, `rooms/${this.currentRoomId}/players/${this.playerId}`), {
+      isReadyForNextRound: isReady
+    });
+  }
+
+  async resetAllPlayersReady() {
+    if (!this.currentRoomId) return;
+    const snapshot = await get(ref(this.db, `rooms/${this.currentRoomId}/players`));
+    const players = snapshot.val() || {};
+    const updates = {};
+    Object.keys(players).forEach(key => {
+      updates[`players/${key}/isReadyForNextRound`] = false;
+    });
+    await update(ref(this.db, `rooms/${this.currentRoomId}`), updates);
+  }
+
+  waitForAllPlayersReady() {
+    return new Promise((resolve) => {
+      const playersRef = ref(this.db, `rooms/${this.currentRoomId}/players`);
+      const unsubscribe = onValue(playersRef, (snapshot) => {
+        const players = snapshot.val() || {};
+        const allReady = Object.values(players).every(p => {
+          if (p.isCpu) return true; // Ignore CPU
+          return p.isReadyForNextRound === true;
+        });
+
+        if (allReady) {
+          unsubscribe(); // Stop listening
+          resolve();
+        }
+      });
     });
   }
 }

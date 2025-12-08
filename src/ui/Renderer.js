@@ -5,6 +5,7 @@ export class Renderer {
     this.container = container;
     this.selectedCards = [];
     this.playerNames = { 0: "あなた", 1: "CPU 左", 2: "CPU 対面", 3: "CPU 右" };
+    this.localPlayerIndex = 0; // Default to 0, but will be updated by GoitaBoard
 
     this.network = new NetworkManager();
     this.network.onRoomUpdate = (data) => this.updateLobby(data);
@@ -13,10 +14,37 @@ export class Renderer {
     this.setupStartScreen();
   }
 
+  setLocalPlayer(index) {
+    this.localPlayerIndex = index;
+    console.log("Renderer: Local Player set to", index);
+    this.updateLayout();
+  }
+
+  updateLayout() {
+    // Rotate the board so localPlayerIndex is at the bottom
+    // Order: 0(Me), 1(Next), 2(Opposite), 3(Previous)
+    // Clockwise: Bottom -> Left -> Top -> Right
+    const positions = ['player-bottom', 'player-left', 'player-top', 'player-right'];
+
+    for (let i = 0; i < 4; i++) {
+      const pArea = document.getElementById(`player-${i}`);
+      if (pArea) {
+        // Calculate relative position
+        // Formula: (i - local + 4) % 4
+        const offset = (i - this.localPlayerIndex + 4) % 4;
+        pArea.className = `player-area ${positions[offset]} team-${i % 2}`;
+      }
+    }
+  }
+
   // === SCREEN 1: Title & Mode Select ===
   setupStartScreen() {
     this.container.innerHTML = `
-        <div id="start-screen" style="display:flex; flex-direction:column; align-items:center; justify-content:center; height:100%; color:var(--wood-light);">
+        <div id="start-screen" style="display:flex; flex-direction:column; align-items:center; justify-content:center; height:100%; color:var(--wood-light); position:relative;">
+            <div style="position:absolute; top:10px; right:10px; font-size:0.8em;">
+                ID: ${this.network.playerId} 
+                <button id="btn-reset-id" style="font-size:0.8em; padding:2px 5px; margin-left:5px;">IDリセット</button>
+            </div>
             <h1 style="font-size:3em; margin-bottom:40px; text-shadow:2px 2px 4px black;">May be ごいた</h1>
             <div style="display:flex; gap:20px;">
                 <button id="btn-mode-single" style="font-size:1.5em; padding:20px 40px; min-width:200px;">シングルプレイ<br><span style="font-size:0.6em">(1人 vs 3CPU)</span></button>
@@ -27,6 +55,12 @@ export class Renderer {
 
     document.getElementById('btn-mode-single').onclick = () => this.setupSinglePlayerSetup();
     document.getElementById('btn-mode-multi').onclick = () => this.setupMultiplayerMenu();
+    document.getElementById('btn-reset-id').onclick = () => {
+      if (confirm("プレイヤーIDをリセットしますか？\n(同じブラウザで2人プレイする場合などに使用します)")) {
+        this.network.resetPlayerId();
+        this.setupStartScreen(); // Refresh
+      }
+    };
   }
 
   // === SCREEN 2A: Single Player Setup ===
@@ -120,6 +154,9 @@ export class Renderer {
             <h2 style="font-size:2em; margin-bottom:10px;">ロビー待機中</h2>
             <div style="font-size:1.5em; margin-bottom:20px;">
                 あいことば: <span id="lobby-room-code" style="font-weight:bold; color:#f1c40f; font-size:1.5em;">Loading...</span>
+            </div>
+            <div style="font-size:0.8em; margin-bottom:20px; color:#aaa;">
+                あなたのID: ${this.network.playerId}
             </div>
 
             <div id="lobby-players" style="display:grid; grid-template-columns: 1fr 1fr; gap:20px; margin-bottom:30px;">
@@ -217,6 +254,7 @@ export class Renderer {
             </div>
 
             <!-- Player Areas with Name Tags -->
+            <!-- IDs are fixed to logical player index, classes determine position -->
             <div id="player-2" class="player-area player-top team-0">
                  <div class="name-tag">${this.playerNames[2]}</div>
                  <div class="field-area">
@@ -259,6 +297,11 @@ export class Renderer {
              <button id="btn-pass">なし (パス)</button>
              <button id="btn-action">決定</button>
           </div>
+
+          <!-- Debug Log Panel -->
+          <div id="network-log" style="position:absolute; top:0; left:0; width:250px; height:400px; overflow-y:scroll; background:rgba(0,0,0,0.8); color:#0f0; font-family:monospace; font-size:10px; z-index:9999; padding:5px; pointer-events:none; opacity:0.8;">
+            <div>=== Network Log ===</div>
+          </div>
     `;
 
     document.getElementById('btn-pass').onclick = () => window.game.handleHumanAction({ action: 'pass' });
@@ -267,10 +310,16 @@ export class Renderer {
       document.getElementById('result-modal').style.display = 'none';
       if (this.nextRoundCallback) this.nextRoundCallback();
     };
+
+    // Initial Layout update
+    this.updateLayout();
   }
 
   render(game) {
     if (!document.getElementById('player-0')) return;
+
+    // Ensure layout is correct
+    this.updateLayout();
 
     game.players.forEach(p => this.renderHand(p));
     if (game.teamScores) this.updateScores(game.teamScores);
@@ -280,40 +329,34 @@ export class Renderer {
       infoEl.textContent = "ゲーム終了";
     } else {
       const turnPlayerId = game.turnPlayerIndex;
-      const turnPlayerName = this.playerNames[turnPlayerId];
-      const isMyTurn = (turnPlayerId === 0);
+      let turnPlayerName = this.playerNames[turnPlayerId] || `Player ${turnPlayerId}`;
+      const isMyTurn = (turnPlayerId === this.localPlayerIndex);
 
-      let msg = "";
+      if (isMyTurn) turnPlayerName += " (あなた)";
+
+      let line1 = turnPlayerName;
+      let line2 = "";
 
       if (game.currentAttack) {
-        if (isMyTurn) {
-          msg = `あなたの番: 受け [${game.currentAttack.card.type}]`;
-          infoEl.style.color = "#e74c3c";
-        } else {
-          msg = `${turnPlayerName} の番 (受け: ${game.currentAttack.card.type})`;
-          infoEl.style.color = "#ffffff";
-        }
+        line2 = `攻め手: ${game.currentAttack.card.type}`;
+        infoEl.style.color = isMyTurn ? "#f1c40f" : "#ffffff";
       } else {
-        if (isMyTurn) {
-          msg = `あなたの番: 攻め (Lead)`;
-          infoEl.style.color = "#00ff00";
-        } else {
-          msg = `${turnPlayerName} の番 (攻め)`;
-          infoEl.style.color = "#ffffff";
-        }
+        line2 = `親 (攻め)`;
+        infoEl.style.color = isMyTurn ? "#00ff00" : "#ffffff";
       }
 
-      infoEl.textContent = msg;
+      infoEl.innerText = `${line1}\n${line2}`;
     }
 
     this.updateControls(game);
+    this.updateNameTags(); // Ensure names are updated with "YOU" label
   }
 
   updateControls(game) {
     const btnAction = document.getElementById('btn-action');
     if (!btnAction) return;
 
-    const isMyTurn = (game.turnPlayerIndex === 0 && !game.gameOver);
+    const isMyTurn = (game.turnPlayerIndex === this.localPlayerIndex && !game.gameOver);
 
     const btnPass = document.getElementById('btn-pass');
     btnPass.disabled = !isMyTurn;
@@ -353,10 +396,14 @@ export class Renderer {
     const handEl = pArea.querySelector('.hand');
     handEl.innerHTML = '';
 
+    const isMe = (player.id === this.localPlayerIndex);
+
     player.hand.forEach(card => {
       const cardEl = document.createElement('div');
       cardEl.className = 'card';
-      if (!player.isHuman) {
+
+      // Only show face if it's ME
+      if (!isMe) {
         cardEl.classList.add('hidden');
       } else {
         cardEl.textContent = card.type;
@@ -386,7 +433,7 @@ export class Renderer {
 
   handleDoubleClick(card, el) {
     const game = window.game;
-    if (game.turnPlayerIndex !== 0) return;
+    if (game.turnPlayerIndex !== this.localPlayerIndex) return;
     if (game.gameOver) return;
 
     if (this.selectedCards.length === 1 && !this.selectedCards.some(c => c.id === card.id)) {
@@ -497,6 +544,19 @@ export class Renderer {
       setTimeout(() => logEl.style.opacity = 0, 3000);
     }
     console.log(msg);
+    this.logNetwork(msg); // Also log to network panel
+  }
+
+  logNetwork(msg) {
+    const el = document.getElementById('network-log');
+    if (el) {
+      const line = document.createElement('div');
+      line.textContent = `[${new Date().toLocaleTimeString()}] ${msg}`;
+      line.style.borderBottom = "1px solid #333";
+      el.appendChild(line);
+      el.scrollTop = el.scrollHeight;
+    }
+    console.log("[NET]", msg);
   }
 
   highlightPlayer(id) {
@@ -511,7 +571,24 @@ export class Renderer {
       const pArea = this.container.querySelector(`#player-${i}`);
       if (pArea) {
         const nameTag = pArea.querySelector('.name-tag');
-        if (nameTag) nameTag.textContent = this.playerNames[i];
+        if (nameTag) {
+          let name = this.playerNames[i] || `Player ${i}`;
+          if (i === this.localPlayerIndex) {
+            name += " (あなた)";
+            nameTag.classList.add('is-me');
+            nameTag.style.color = "#f1c40f";
+            nameTag.style.fontWeight = "bold";
+            nameTag.style.border = "2px solid #f1c40f";
+            nameTag.style.padding = "2px 8px";
+            nameTag.style.borderRadius = "10px";
+          } else {
+            nameTag.classList.remove('is-me');
+            nameTag.style.color = "";
+            nameTag.style.fontWeight = "";
+            nameTag.style.border = "";
+          }
+          nameTag.textContent = name;
+        }
 
         // Also update score board name for Player 0
         if (i === 0) {
