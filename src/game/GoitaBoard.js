@@ -596,6 +596,10 @@ export class GoitaBoard {
       // logic: I had write permission (my turn), I wrote action. Now I write turn update.
       await this.syncTurnToNetwork();
     }
+
+    // Resume Turn Loop (After Action + Network Sync)
+    this.nextTurn();
+
     return result;
   }
 
@@ -629,6 +633,9 @@ export class GoitaBoard {
 
     this.renderer.log(`Remote Action from P${player.id}`);
     await this.executeActionLogic(player, remoteAction);
+
+    // Resume Turn Loop (After Remote Action)
+    this.nextTurn();
   }
 
   // Separated Logic for reuse
@@ -643,9 +650,10 @@ export class GoitaBoard {
       if (this.passCount >= 3) {
         const winnerIndex = this.currentAttack.playerIndex;
         this.finishTrick(winnerIndex);
+        // trick finished, turnPlayerIndex updated inside finishTrick
       } else {
         this.turnPlayerIndex = (this.turnPlayerIndex + 1) % 4;
-        this.nextTurn();
+        // nextTurn() removed - called by caller
       }
       return { valid: true };
     }
@@ -691,7 +699,7 @@ export class GoitaBoard {
 
         if (!this.gameOver && !roundEnded) {
           this.turnPlayerIndex = (this.turnPlayerIndex + 1) % 4;
-          this.nextTurn();
+          // nextTurn() removed - called by caller
         }
         return { valid: true };
 
@@ -732,7 +740,7 @@ export class GoitaBoard {
 
         if (!this.gameOver && !roundEnded) {
           this.turnPlayerIndex = (this.turnPlayerIndex + 1) % 4;
-          this.nextTurn();
+          // nextTurn() removed - called by caller
         }
         return { valid: true };
       }
@@ -740,12 +748,11 @@ export class GoitaBoard {
   }
 
   finishTrick(winnerIndex) {
-    this.renderer.log(`全員パス。プレイヤー ${winnerIndex} が再攻撃します。`);
     this.currentAttack = null;
     this.passCount = 0;
     this.turnPlayerIndex = winnerIndex;
     this.renderer.render(this);
-    this.nextTurn();
+    // nextTurn() removed - called by caller
   }
 
   async checkWin(player, isDouble = false) {
