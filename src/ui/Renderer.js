@@ -45,10 +45,18 @@ export class Renderer {
                 ID: ${this.network.playerId} 
                 <button id="btn-reset-id" style="font-size:0.8em; padding:2px 5px; margin-left:5px;">IDリセット</button>
             </div>
-            <h1 style="font-size:3em; margin-bottom:40px; text-shadow:2px 2px 4px black;">May be ごいた</h1>
+            <div style="position:absolute; bottom:10px; right:10px; font-size:0.9em; color:#999;">
+                Ver: 0.8
+            </div>
+            <h1 style="font-size:3em; margin-bottom:40px; text-shadow:2px 2px 4px black;">May be ごいた Online</h1>
             <div style="display:flex; gap:20px;">
                 <button id="btn-mode-single" style="font-size:1.5em; padding:20px 40px; min-width:200px;">シングルプレイ<br><span style="font-size:0.6em">(1人 vs 3CPU)</span></button>
                 <button id="btn-mode-multi" style="font-size:1.5em; padding:20px 40px; min-width:200px;">マルチプレイ<br><span style="font-size:0.6em">(通信対戦)</span></button>
+            </div>
+            <div style="margin-top:30px; display:flex; gap:20px; font-size:0.9em;">
+                <a href="https://ja.wikipedia.org/wiki/%E3%81%94%E3%81%84%E3%81%9F" target="_blank" style="color:#4a9eff; text-decoration:none; border-bottom:1px solid #4a9eff;">ごいたとは？</a>
+                <span style="color:#666;">|</span>
+                <a href="https://goita.jp/wp-content/uploads/2016/11/goita_rule_2nd.pdf" target="_blank" style="color:#4a9eff; text-decoration:none; border-bottom:1px solid #4a9eff;">ルールページ (PDF)</a>
             </div>
         </div>
       `;
@@ -107,6 +115,7 @@ export class Renderer {
                 <div style="margin:10px 0;">または</div>
                 <div style="display:flex; gap:10px; justify-content:center;">
                     <input type="text" id="input-room-code" placeholder="あいことば" style="padding:10px; width:120px; text-align:center;">
+                    <button id="btn-paste-code" style="font-size:0.8em; padding:10px;">ペースト</button>
                     <button id="btn-join-room" style="font-size:1.2em; padding:10px 20px;">参加</button>
                 </div>
 
@@ -145,6 +154,13 @@ export class Renderer {
         alert("エラー: " + res.error);
       }
     };
+
+    document.getElementById('btn-paste-code').onclick = async () => {
+      try {
+        const text = await navigator.clipboard.readText();
+        document.getElementById('input-room-code').value = text;
+      } catch (e) { alert("クリップボードの読み取りに失敗しました"); }
+    };
   }
 
   // === SCREEN 3: Lobby ===
@@ -154,6 +170,7 @@ export class Renderer {
             <h2 style="font-size:2em; margin-bottom:10px;">ロビー待機中</h2>
             <div style="font-size:1.5em; margin-bottom:20px;">
                 あいことば: <span id="lobby-room-code" style="font-weight:bold; color:#f1c40f; font-size:1.5em;">Loading...</span>
+                <button id="btn-lobby-copy" style="font-size:0.6em; margin-left:10px; padding:2px 8px;">コピー</button>
             </div>
             <div style="font-size:0.8em; margin-bottom:20px; color:#aaa;">
                 あなたのID: ${this.network.playerId}
@@ -182,6 +199,14 @@ export class Renderer {
 
     document.getElementById('btn-start-multi').onclick = () => {
       this.network.startGame();
+    };
+
+    document.getElementById('btn-lobby-copy').onclick = () => {
+      const code = document.getElementById('lobby-room-code').textContent;
+      navigator.clipboard.writeText(code);
+      const btn = document.getElementById('btn-lobby-copy');
+      btn.textContent = "コピー済";
+      setTimeout(() => btn.textContent = "コピー", 2000);
     };
   }
 
@@ -236,8 +261,12 @@ export class Renderer {
   }
 
   setupGameUI() {
-    this.container.innerHTML = `
-          <div id="game-board">
+    this.container.innerHTML = '';
+
+    // 1. Game Board
+    const board = document.createElement('div');
+    board.id = 'game-board';
+    board.innerHTML = `
             <div id="center-info">
                  <div class="score-board">
                     <div class="team-score team-0">チームA (<span id="name-0-score">${this.playerNames[0]}</span>): <span id="score-0">0</span></div>
@@ -254,7 +283,6 @@ export class Renderer {
             </div>
 
             <!-- Player Areas with Name Tags -->
-            <!-- IDs are fixed to logical player index, classes determine position -->
             <div id="player-2" class="player-area player-top team-0">
                  <div class="name-tag">${this.playerNames[2]}</div>
                  <div class="field-area">
@@ -291,19 +319,26 @@ export class Renderer {
                  <div class="status-bubble"></div>
                  <div class="name-tag" style="margin-top:5px;">${this.playerNames[0]}</div>
             </div>
-          </div>
+    `;
+    this.container.appendChild(board);
 
+    // 2. Controls & Log
+    this.container.insertAdjacentHTML('beforeend', `
           <div id="controls">
              <button id="btn-pass">なし (パス)</button>
              <button id="btn-action">決定</button>
           </div>
 
           <!-- Debug Log Panel -->
-          <div id="network-log" style="position:absolute; top:0; left:0; width:250px; height:400px; overflow-y:scroll; background:rgba(0,0,0,0.8); color:#0f0; font-family:monospace; font-size:10px; z-index:9999; padding:5px; pointer-events:none; opacity:0.8;">
+          <div id="network-log" style="display:none; position:absolute; top:0; left:0; width:250px; height:400px; overflow-y:scroll; background:rgba(0,0,0,0.8); color:#0f0; font-family:monospace; font-size:10px; z-index:9999; padding:5px; pointer-events:none; opacity:0.8;">
             <div>=== Network Log ===</div>
           </div>
-    `;
+    `);
 
+    // 3. Settings UI
+    this.createSettingsUI();
+
+    // 4. Event Listeners
     document.getElementById('btn-pass').onclick = () => window.game.handleHumanAction({ action: 'pass' });
     document.getElementById('btn-action').onclick = () => this.submitAction();
     document.getElementById('btn-next-round').onclick = () => {
@@ -338,7 +373,8 @@ export class Renderer {
       let line2 = "";
 
       if (game.currentAttack) {
-        line2 = `攻め手: ${game.currentAttack.card.type}`;
+        const cardName = game.currentAttack.card.isJewel ? "玉" : game.currentAttack.card.type;
+        line2 = `攻め手: ${cardName}`;
         infoEl.style.color = isMyTurn ? "#f1c40f" : "#ffffff";
       } else {
         line2 = `親 (攻め)`;
@@ -406,7 +442,7 @@ export class Renderer {
       if (!isMe) {
         cardEl.classList.add('hidden');
       } else {
-        cardEl.textContent = card.type;
+        cardEl.textContent = card.isJewel ? "玉" : card.type;
         cardEl.onclick = () => this.toggleSelect(card, cardEl);
         // Double click interaction
         cardEl.ondblclick = () => this.handleDoubleClick(card, cardEl);
@@ -476,20 +512,21 @@ export class Renderer {
       c1.classList.add('hidden');
       c1.classList.add('lead-hidden');
     } else {
-      c1.textContent = card1.type;
+      c1.textContent = card1.isJewel ? "玉" : card1.type;
     }
 
     // Card 2 -> Attack Row
     const c2 = document.createElement('div');
     c2.className = 'card small';
-    c2.textContent = card2.type;
+    c2.textContent = card2.isJewel ? "玉" : card2.type;
 
     rowRec.appendChild(c1);
     rowAtt.appendChild(c2);
 
     // Bubbles
     const actionName = isLead ? "攻" : "受・攻";
-    this.showBubble(playerId, `${actionName}: ${card2.type}`);
+    const cardName = card2.isJewel ? "玉" : card2.type;
+    this.showBubble(playerId, `${actionName}: ${cardName}`);
   }
 
   showBubble(playerId, text) {
@@ -498,6 +535,21 @@ export class Renderer {
       bubble.textContent = text;
       bubble.classList.add('show');
       setTimeout(() => bubble.classList.remove('show'), 2000);
+    }
+  }
+
+  revealLastLead(playerId, card) {
+    const pArea = this.container.querySelector(`#player-${playerId}`);
+    if (!pArea) return;
+
+    const rowRec = pArea.querySelector('.row-receive');
+    const hiddenCard = rowRec.querySelector('.lead-hidden');
+
+    if (hiddenCard) {
+      hiddenCard.classList.remove('hidden');
+      hiddenCard.classList.remove('lead-hidden');
+      hiddenCard.textContent = card.isJewel ? "玉" : card.type;
+      hiddenCard.style.color = "#f1c40f"; // Highlight revealed card
     }
   }
 
@@ -597,5 +649,74 @@ export class Renderer {
         }
       }
     }
+  }
+
+  createSettingsUI() {
+    // Settings Button
+    const btnSettings = document.createElement('button');
+    btnSettings.id = 'btn-settings';
+    btnSettings.textContent = '⚙️ 設定';
+    btnSettings.className = 'settings-button';
+    btnSettings.onclick = () => {
+      const modal = document.getElementById('settings-modal');
+      modal.style.display = (modal.style.display === 'block') ? 'none' : 'block';
+    };
+    this.container.appendChild(btnSettings);
+
+    // Settings Modal
+    const modal = document.createElement('div');
+    modal.id = 'settings-modal';
+    modal.className = 'settings-modal';
+    modal.style.display = 'none';
+
+    const content = document.createElement('div');
+    content.className = 'settings-content';
+
+    // 1. Room ID
+    if (this.network.currentRoomId) {
+      const roomRow = document.createElement('div');
+      roomRow.className = 'settings-row';
+      roomRow.innerHTML = `
+              <span>ルームID: <strong>${this.network.currentRoomId}</strong></span>
+              <button id="btn-copy-id" style="margin-left:10px;">コピー</button>
+          `;
+      content.appendChild(roomRow);
+
+      setTimeout(() => {
+        const btnCopy = document.getElementById('btn-copy-id');
+        if (btnCopy) {
+          btnCopy.onclick = () => {
+            navigator.clipboard.writeText(this.network.currentRoomId);
+            btnCopy.textContent = "コピーしました";
+            setTimeout(() => btnCopy.textContent = "コピー", 2000);
+          };
+        }
+      }, 0);
+    }
+
+    // 2. Network Log Toggle
+    const logRow = document.createElement('div');
+    logRow.className = 'settings-row';
+    logRow.innerHTML = `
+            <span>ネットワークログ表示</span>
+            <button id="btn-toggle-log">表示</button>
+        `;
+    content.appendChild(logRow);
+
+    setTimeout(() => {
+      const btnLog = document.getElementById('btn-toggle-log');
+      if (btnLog) {
+        btnLog.onclick = () => {
+          const netLog = document.getElementById('network-log');
+          if (netLog) {
+            netLog.style.display = (netLog.style.display === 'none') ? 'block' : 'none';
+            btnLog.textContent = (netLog.style.display === 'none') ? '表示' : '非表示';
+          }
+        };
+      }
+    }, 0);
+
+    modal.appendChild(content);
+    this.container.appendChild(modal);
   }
 }

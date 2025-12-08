@@ -307,3 +307,52 @@ button:disabled {
     grid-template-rows: 150px 1fr 150px;
   }
 }
+
+/* Settings UI */
+.settings-button {
+  position: fixed;
+  top: 10px;
+  right: 10px;
+  z-index: 2000;
+  padding: 5px 10px;
+  background: rgba(255, 255, 255, 0.9);
+  border: 1px solid #ccc;
+  border-radius: 5px;
+  cursor: pointer;
+  font-size: 14px;
+  color: #333;
+}
+
+.settings-modal {
+  position: fixed;
+  top: 45px;
+  right: 10px;
+  z-index: 2000;
+  background: white;
+  border: 1px solid #ccc;
+  border-radius: 8px;
+  box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+  padding: 15px;
+  min-width: 250px;
+  color: #333;
+}
+
+.settings-row {
+  margin-bottom: 10px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.settings-row:last-child {
+  margin-bottom: 0;
+}
+
+#btn-copy-id {
+  padding: 2px 8px;
+  font-size: 12px;
+  cursor: pointer;
+  background: #eee;
+  color: #333;
+  border: 1px solid #ccc;
+}

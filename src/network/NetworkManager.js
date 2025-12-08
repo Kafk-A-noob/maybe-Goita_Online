@@ -62,6 +62,8 @@ export class NetworkManager {
 
   // === Room Management ===
 
+  // === Room Management ===
+
   async createRoom(playerName) {
     if (!this.initialized) return { success: false, error: "Firebase not configured" };
 
@@ -235,11 +237,29 @@ export class NetworkManager {
     await update(roomRef, { status: 'playing' });
   }
 
+  async resetRoom() {
+    if (!this.isHost || !this.currentRoomId) return;
+
+    // Reset to waiting
+    const updates = {};
+    updates[`rooms/${this.currentRoomId}/status`] = 'waiting';
+    updates[`rooms/${this.currentRoomId}/gameState`] = null;
+    updates[`rooms/${this.currentRoomId}/actions`] = null;
+
+    // Reset player ready flags
+    const snapshot = await get(ref(this.db, `rooms/${this.currentRoomId}/players`));
+    const players = snapshot.val() || {};
+    Object.keys(players).forEach(key => {
+      updates[`rooms/${this.currentRoomId}/players/${key}/isReadyForNextRound`] = false;
+    });
+
+    await update(ref(this.db), updates);
+  }
+
   // === Game Synchronization ===
 
   async setInitialState(state) {
     if (!this.currentRoomId) return;
-    // State: { hands: [[card, ...], ...], turn: 0, round: 1 }
     await set(ref(this.db, `rooms/${this.currentRoomId}/gameState`), state);
   }
 
@@ -254,13 +274,26 @@ export class NetworkManager {
 
   async sendGameAction(action) {
     if (!this.currentRoomId) return;
-    // Push action to list
     const actionRef = push(ref(this.db, `rooms/${this.currentRoomId}/actions`));
     await set(actionRef, {
       ...action,
       playerId: this.playerId,
       timestamp: Date.now()
     });
+  }
+
+  async getGameState() {
+    if (!this.currentRoomId) return null;
+    const snapshot = await get(ref(this.db, `rooms/${this.currentRoomId}/gameState`));
+    return snapshot.val();
+  }
+
+  async getGameActions() {
+    if (!this.currentRoomId) return [];
+    const snapshot = await get(ref(this.db, `rooms/${this.currentRoomId}/actions`));
+    const actions = snapshot.val();
+    if (!actions) return [];
+    return Object.values(actions);
   }
 
   subscribeToGameActions(callback) {
@@ -270,6 +303,47 @@ export class NetworkManager {
     onChildAdded(actionsRef, (snapshot) => {
       const action = snapshot.val();
       if (action) callback(action);
+    });
+  }
+
+  // === Special Events (Shi Rules) ===
+
+  async sendSpecialWin(condition) {
+    if (!this.currentRoomId) return;
+    await set(ref(this.db, `rooms/${this.currentRoomId}/specialWin`), condition);
+  }
+
+  async sendFiveShiEvent(condition) {
+    if (!this.currentRoomId) return;
+    await set(ref(this.db, `rooms/${this.currentRoomId}/fiveShi`), condition);
+  }
+
+  async sendRedeal() {
+    if (!this.currentRoomId) return;
+    // Clear special states and set redeal flag
+    const updates = {};
+    updates[`rooms/${this.currentRoomId}/fiveShi`] = null;
+    updates[`rooms/${this.currentRoomId}/redeal`] = Date.now();
+    await update(ref(this.db), updates);
+  }
+
+  subscribeToSpecialEvents(callbacks) {
+    if (!this.currentRoomId) return;
+    const roomRef = ref(this.db, `rooms/${this.currentRoomId}`);
+
+    onValue(child(roomRef, 'specialWin'), (snapshot) => {
+      const val = snapshot.val();
+      if (val && callbacks.onSpecialWin) callbacks.onSpecialWin(val);
+    });
+
+    onValue(child(roomRef, 'fiveShi'), (snapshot) => {
+      const val = snapshot.val();
+      if (val && callbacks.onFiveShi) callbacks.onFiveShi(val);
+    });
+
+    onValue(child(roomRef, 'redeal'), (snapshot) => {
+      const val = snapshot.val();
+      if (val && callbacks.onRedeal) callbacks.onRedeal(val);
     });
   }
 
