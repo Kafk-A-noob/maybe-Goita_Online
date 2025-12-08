@@ -242,16 +242,17 @@ export class GoitaBoard {
       // Network Round Reset
       this.renderer.log("次のラウンドの準備中...");
 
-      // 1. Set Ready
-      await this.network.setReadyForNextRound(true);
+      // 1. Set Ready for the NEXT round (current + 1)
+      const targetRound = this.roundCount + 1;
+      await this.network.setReadyForNextRound(targetRound);
 
       if (this.network.isHost) {
         this.renderer.log("全員の準備完了を待っています...");
-        // 2. Wait for everyone
-        await this.network.waitForAllPlayersReady();
+        // 2. Wait for everyone to be ready for targetRound
+        await this.network.waitForAllPlayersReady(targetRound);
 
-        // 3. Reset Ready Flags
-        await this.network.resetAllPlayersReady();
+        // 3. Reset Ready Flags (REMOVED - No longer needed)
+        // await this.network.resetAllPlayersReady();
 
         // 4. Start New Round (HOST)
         this.renderer.log(`=== ラウンド ${this.roundCount} 開始 (ホスト) ===`);

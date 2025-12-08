@@ -358,25 +358,14 @@ export class NetworkManager {
 
   // === Round Synchronization ===
 
-  async setReadyForNextRound(isReady) {
+  async setReadyForNextRound(roundNumber) {
     if (!this.currentRoomId) return;
     await update(ref(this.db, `games/${this.currentRoomId}/players/${this.playerId}`), {
-      isReadyForNextRound: isReady
+      readyForRound: roundNumber
     });
   }
 
-  async resetAllPlayersReady() {
-    if (!this.currentRoomId) return;
-    const snapshot = await get(ref(this.db, `games/${this.currentRoomId}/players`));
-    const players = snapshot.val() || {};
-    const updates = {};
-    Object.keys(players).forEach(key => {
-      updates[`players/${key}/isReadyForNextRound`] = false;
-    });
-    await update(ref(this.db, `games/${this.currentRoomId}`), updates);
-  }
-
-  waitForAllPlayersReady() {
+  waitForAllPlayersReady(targetRound) {
     return new Promise((resolve) => {
       const playersRef = ref(this.db, `games/${this.currentRoomId}/players`);
       let unsubscribe;
@@ -386,22 +375,18 @@ export class NetworkManager {
         const players = snapshot.val() || {};
         const allReady = Object.values(players).every(p => {
           if (p.isCpu) return true;
-          return p.isReadyForNextRound === true;
+          // Check if player is ready for the SPECIFIC target round (or higher)
+          return (p.readyForRound && p.readyForRound >= targetRound);
         });
 
         if (allReady) {
-          if (unsubscribe) {
-            unsubscribe();
-          }
+          if (unsubscribe) unsubscribe();
           resolved = true;
           resolve();
         }
       });
 
-      // If the callback ran synchronously and finished, unsubscribe now.
-      if (resolved && unsubscribe) {
-        unsubscribe();
-      }
+      if (resolved && unsubscribe) unsubscribe();
     });
   }
 }
