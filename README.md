@@ -13,7 +13,7 @@
 ## ゲームをプレイする
 以下のURLからすぐにプレイできます。特別なインストールは不要です。
 
-[ゲームをプレイ](https://kafk-a-noob.github.io/maybe-Goita_Online/)
+[ゲームをプレイ](https://maybe-goita-online.vercel.app/)
 
 ### 遊び方
 
