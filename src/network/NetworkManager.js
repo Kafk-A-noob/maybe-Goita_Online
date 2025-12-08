@@ -1,15 +1,15 @@
 import { initializeApp } from "firebase/app";
 import { getDatabase, ref, set, onValue, update, get, child, push, onDisconnect, onChildAdded, remove } from "firebase/database";
+import { getAuth, signInAnonymously, onAuthStateChanged } from "firebase/auth";
 
-// TODO: USER MUST UPDATE THIS CONFIG
 const firebaseConfig = {
-  apiKey: "AIzaSyDApOxz17VTsot6Ph5sVMDOJCflc1_lE7o",
-  authDomain: "may-be-goita-online.firebaseapp.com",
-  databaseURL: "https://may-be-goita-online-default-rtdb.firebaseio.com",
-  projectId: "may-be-goita-online",
-  storageBucket: "may-be-goita-online.firebasestorage.app",
-  messagingSenderId: "774407878648",
-  appId: "1:774407878648:web:a5014459d8ba834c4cc80d"
+  apiKey: import.meta.env.VITE_FIREBASE_API_KEY,
+  authDomain: import.meta.env.VITE_FIREBASE_AUTH_DOMAIN,
+  databaseURL: import.meta.env.VITE_FIREBASE_DATABASE_URL,
+  projectId: import.meta.env.VITE_FIREBASE_PROJECT_ID,
+  storageBucket: import.meta.env.VITE_FIREBASE_STORAGE_BUCKET,
+  messagingSenderId: import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID,
+  appId: import.meta.env.VITE_FIREBASE_APP_ID,
 };
 
 export class NetworkManager {
@@ -17,13 +17,15 @@ export class NetworkManager {
     try {
       this.app = initializeApp(firebaseConfig);
       this.db = getDatabase(this.app);
+      this.auth = getAuth(this.app);
       this.initialized = true;
     } catch (e) {
       console.error("Firebase Init Error:", e);
       this.initialized = false;
     }
 
-    this.playerId = this.getPlayerId();
+    this.playerId = null;
+    this.hostId = null; // Store Host UID for CPU logic
     this.playerName = "Player";
     this.currentRoomId = null;
     this.isHost = false;
@@ -32,26 +34,40 @@ export class NetworkManager {
     // Callbacks
     this.onRoomUpdate = null; // (roomData) => {}
     this.onGameStart = null;  // () => {}
+
+    this.initAuth();
   }
 
-  getPlayerId() {
-    let id = sessionStorage.getItem('goita_playerId');
-    if (!id) {
-      id = 'user_' + Math.random().toString(36).substr(2, 9);
-      sessionStorage.setItem('goita_playerId', id);
-    }
-    return id;
+  initAuth() {
+    if (!this.initialized) return;
+    signInAnonymously(this.auth).catch((error) => {
+      console.error("Auth Failed", error);
+    });
+
+    onAuthStateChanged(this.auth, (user) => {
+      if (user) {
+        this.playerId = user.uid;
+        console.log("Authenticated as:", this.playerId);
+      } else {
+        this.playerId = null;
+      }
+    });
   }
 
-  resetPlayerId() {
-    sessionStorage.removeItem('goita_playerId');
-    this.playerId = this.getPlayerId();
-    console.log("Player ID Reset:", this.playerId);
-    return this.playerId;
+  async waitForAuth() {
+    if (this.playerId) return this.playerId;
+    return new Promise((resolve) => {
+      const unsubscribe = onAuthStateChanged(this.auth, (user) => {
+        if (user) {
+          this.playerId = user.uid;
+          unsubscribe();
+          resolve(user.uid);
+        }
+      });
+    });
   }
 
   generateRoomCode() {
-    // Hiragana 4 chars
     const chars = "あいうえおかきくけこさしすせそたちつてとなにぬねのはひふへほまみむめもやゆよらりるれろわをん";
     let code = "";
     for (let i = 0; i < 4; i++) {
@@ -62,40 +78,38 @@ export class NetworkManager {
 
   // === Room Management ===
 
-  // === Room Management ===
-
   async createRoom(playerName) {
     if (!this.initialized) return { success: false, error: "Firebase not configured" };
+    await this.waitForAuth();
 
     this.playerName = playerName;
     this.isHost = true;
+    this.hostId = this.playerId;
     const code = this.generateRoomCode();
     this.currentRoomId = code;
 
     const roomData = {
       hostId: this.playerId,
-      status: 'waiting', // waiting, playing
+      status: 'waiting',
       players: {
         [this.playerId]: {
           name: playerName,
           id: this.playerId,
-          index: 0, // Host is always 0 initially
+          index: 0,
           isHost: true,
           isReady: true
         }
       },
-      settings: {
-        mode: 'standard' // standard, 2vs2, etc
-      }
+      settings: { mode: 'standard' },
+      // Initialize 'turn' to Host so they can write initially
+      turn: this.playerId
     };
 
     try {
-      this.roomRef = ref(this.db, 'rooms/' + code);
+      this.roomRef = ref(this.db, 'games/' + code);
       await set(this.roomRef, roomData);
 
-      // Remove on disconnect
       onDisconnect(this.roomRef).remove();
-
       this.listenToRoom();
       return { success: true, code: code };
     } catch (e) {
@@ -106,12 +120,13 @@ export class NetworkManager {
 
   async joinRoom(code, playerName) {
     if (!this.initialized) return { success: false, error: "Firebase not configured" };
+    await this.waitForAuth();
 
     this.playerName = playerName;
     this.isHost = false;
     this.currentRoomId = code;
 
-    const roomRef = ref(this.db, 'rooms/' + code);
+    const roomRef = ref(this.db, 'games/' + code);
 
     try {
       const snapshot = await get(roomRef);
@@ -120,30 +135,23 @@ export class NetworkManager {
       }
 
       const roomData = snapshot.val();
+      this.hostId = roomData.hostId;
+
       if (roomData.status !== 'waiting' && roomData.status !== 'playing') {
-        // Allow rejoin if playing?
-        // For now, strict check unless we are rejoining.
+        // ...
       }
 
       const players = roomData.players || {};
 
-      // Check if I am already in the room (Rejoin)
       let myIndex = -1;
       if (players[this.playerId]) {
         myIndex = players[this.playerId].index;
         console.log("Rejoining as Player", myIndex);
       } else {
-        // New Join
         const playerCount = Object.keys(players).length;
-        if (playerCount >= 4) {
-          return { success: false, error: "部屋は満員です" };
-        }
+        if (playerCount >= 4) return { success: false, error: "部屋は満員です" };
+        if (roomData.status !== 'waiting') return { success: false, error: "ゲームは既に始まっています" };
 
-        if (roomData.status !== 'waiting') {
-          return { success: false, error: "ゲームは既に始まっています" };
-        }
-
-        // Determine Index (0-3)
         const usedIndices = Object.values(players).map(p => p.index);
         for (let i = 0; i < 4; i++) {
           if (!usedIndices.includes(i)) {
@@ -153,7 +161,6 @@ export class NetworkManager {
         }
       }
 
-      // Add/Update Player
       const newPlayer = {
         name: playerName,
         id: this.playerId,
@@ -162,14 +169,11 @@ export class NetworkManager {
         isReady: true
       };
 
-      await update(ref(this.db, `rooms/${code}/players/${this.playerId}`), newPlayer);
-
-      // Remove player on disconnect
-      onDisconnect(ref(this.db, `rooms/${code}/players/${this.playerId}`)).remove();
+      await update(ref(this.db, `games/${code}/players/${this.playerId}`), newPlayer);
+      onDisconnect(ref(this.db, `games/${code}/players/${this.playerId}`)).remove();
 
       this.listenToRoom();
       return { success: true, index: myIndex };
-
 
     } catch (e) {
       console.error(e);
@@ -180,10 +184,13 @@ export class NetworkManager {
   listenToRoom() {
     if (!this.currentRoomId) return;
 
-    const roomRef = ref(this.db, 'rooms/' + this.currentRoomId);
+    const roomRef = ref(this.db, 'games/' + this.currentRoomId);
     onValue(roomRef, (snapshot) => {
       const data = snapshot.val();
       if (data) {
+        // Update hostId if it changed (unlikely but good for safety)
+        if (data.hostId) this.hostId = data.hostId;
+
         if (this.onRoomUpdate) this.onRoomUpdate(data);
 
         if (data.status === 'playing' && this.onGameStart) {
@@ -193,7 +200,6 @@ export class NetworkManager {
           }
         }
       } else {
-        // Room deleted
         if (this.onRoomUpdate) this.onRoomUpdate(null);
       }
     });
@@ -202,8 +208,7 @@ export class NetworkManager {
   async startGame() {
     if (!this.isHost || !this.currentRoomId) return;
 
-    // Auto-fill with NPCs
-    const roomRef = ref(this.db, 'rooms/' + this.currentRoomId);
+    const roomRef = ref(this.db, 'games/' + this.currentRoomId);
     const snapshot = await get(roomRef);
     if (!snapshot.exists()) return;
 
@@ -221,7 +226,7 @@ export class NetworkManager {
           index: i,
           isHost: false,
           isReady: true,
-          isCpu: true // Flag to identify CPU
+          isCpu: true
         };
       }
     }
@@ -230,27 +235,22 @@ export class NetworkManager {
       await update(roomRef, updates);
     }
 
-    // Clear previous actions to prevent ghost replays
-    await remove(ref(this.db, `rooms/${this.currentRoomId}/actions`));
-
-    // Start Game
+    await remove(ref(this.db, `games/${this.currentRoomId}/actions`));
     await update(roomRef, { status: 'playing' });
   }
 
   async resetRoom() {
     if (!this.isHost || !this.currentRoomId) return;
 
-    // Reset to waiting
     const updates = {};
-    updates[`rooms/${this.currentRoomId}/status`] = 'waiting';
-    updates[`rooms/${this.currentRoomId}/gameState`] = null;
-    updates[`rooms/${this.currentRoomId}/actions`] = null;
+    updates[`games/${this.currentRoomId}/status`] = 'waiting';
+    updates[`games/${this.currentRoomId}/gameState`] = null;
+    updates[`games/${this.currentRoomId}/actions`] = null;
 
-    // Reset player ready flags
-    const snapshot = await get(ref(this.db, `rooms/${this.currentRoomId}/players`));
+    const snapshot = await get(ref(this.db, `games/${this.currentRoomId}/players`));
     const players = snapshot.val() || {};
     Object.keys(players).forEach(key => {
-      updates[`rooms/${this.currentRoomId}/players/${key}/isReadyForNextRound`] = false;
+      updates[`games/${this.currentRoomId}/players/${key}/isReadyForNextRound`] = false;
     });
 
     await update(ref(this.db), updates);
@@ -260,12 +260,22 @@ export class NetworkManager {
 
   async setInitialState(state) {
     if (!this.currentRoomId) return;
-    await set(ref(this.db, `rooms/${this.currentRoomId}/gameState`), state);
+    await set(ref(this.db, `games/${this.currentRoomId}/gameState`), state);
+  }
+
+  // Update Turn in Root (Critical for Permission)
+  async updateTurn(nextPlayerUid) {
+    if (!this.currentRoomId) return;
+    console.log("Syncing Turn to UID:", nextPlayerUid);
+    // Because we can only write if 'turn' == MyUID, and we are changing it to nextPlayerUid.
+    await update(ref(this.db, `games/${this.currentRoomId}`), {
+      turn: nextPlayerUid
+    });
   }
 
   subscribeToInitialState(callback) {
     if (!this.currentRoomId) return;
-    const stateRef = ref(this.db, `rooms/${this.currentRoomId}/gameState`);
+    const stateRef = ref(this.db, `games/${this.currentRoomId}/gameState`);
     onValue(stateRef, (snapshot) => {
       const state = snapshot.val();
       if (state) callback(state);
@@ -274,7 +284,7 @@ export class NetworkManager {
 
   async sendGameAction(action) {
     if (!this.currentRoomId) return;
-    const actionRef = push(ref(this.db, `rooms/${this.currentRoomId}/actions`));
+    const actionRef = push(ref(this.db, `games/${this.currentRoomId}/actions`));
     await set(actionRef, {
       ...action,
       playerId: this.playerId,
@@ -284,13 +294,13 @@ export class NetworkManager {
 
   async getGameState() {
     if (!this.currentRoomId) return null;
-    const snapshot = await get(ref(this.db, `rooms/${this.currentRoomId}/gameState`));
+    const snapshot = await get(ref(this.db, `games/${this.currentRoomId}/gameState`));
     return snapshot.val();
   }
 
   async getGameActions() {
     if (!this.currentRoomId) return [];
-    const snapshot = await get(ref(this.db, `rooms/${this.currentRoomId}/actions`));
+    const snapshot = await get(ref(this.db, `games/${this.currentRoomId}/actions`));
     const actions = snapshot.val();
     if (!actions) return [];
     return Object.values(actions);
@@ -298,7 +308,7 @@ export class NetworkManager {
 
   subscribeToGameActions(callback) {
     if (!this.currentRoomId) return;
-    const actionsRef = ref(this.db, `rooms/${this.currentRoomId}/actions`);
+    const actionsRef = ref(this.db, `games/${this.currentRoomId}/actions`);
 
     onChildAdded(actionsRef, (snapshot) => {
       const action = snapshot.val();
@@ -310,26 +320,25 @@ export class NetworkManager {
 
   async sendSpecialWin(condition) {
     if (!this.currentRoomId) return;
-    await set(ref(this.db, `rooms/${this.currentRoomId}/specialWin`), condition);
+    await set(ref(this.db, `games/${this.currentRoomId}/specialWin`), condition);
   }
 
   async sendFiveShiEvent(condition) {
     if (!this.currentRoomId) return;
-    await set(ref(this.db, `rooms/${this.currentRoomId}/fiveShi`), condition);
+    await set(ref(this.db, `games/${this.currentRoomId}/fiveShi`), condition);
   }
 
   async sendRedeal() {
     if (!this.currentRoomId) return;
-    // Clear special states and set redeal flag
     const updates = {};
-    updates[`rooms/${this.currentRoomId}/fiveShi`] = null;
-    updates[`rooms/${this.currentRoomId}/redeal`] = Date.now();
+    updates[`games/${this.currentRoomId}/fiveShi`] = null;
+    updates[`games/${this.currentRoomId}/redeal`] = Date.now();
     await update(ref(this.db), updates);
   }
 
   subscribeToSpecialEvents(callbacks) {
     if (!this.currentRoomId) return;
-    const roomRef = ref(this.db, `rooms/${this.currentRoomId}`);
+    const roomRef = ref(this.db, `games/${this.currentRoomId}`);
 
     onValue(child(roomRef, 'specialWin'), (snapshot) => {
       const val = snapshot.val();
@@ -351,37 +360,48 @@ export class NetworkManager {
 
   async setReadyForNextRound(isReady) {
     if (!this.currentRoomId) return;
-    await update(ref(this.db, `rooms/${this.currentRoomId}/players/${this.playerId}`), {
+    await update(ref(this.db, `games/${this.currentRoomId}/players/${this.playerId}`), {
       isReadyForNextRound: isReady
     });
   }
 
   async resetAllPlayersReady() {
     if (!this.currentRoomId) return;
-    const snapshot = await get(ref(this.db, `rooms/${this.currentRoomId}/players`));
+    const snapshot = await get(ref(this.db, `games/${this.currentRoomId}/players`));
     const players = snapshot.val() || {};
     const updates = {};
     Object.keys(players).forEach(key => {
       updates[`players/${key}/isReadyForNextRound`] = false;
     });
-    await update(ref(this.db, `rooms/${this.currentRoomId}`), updates);
+    await update(ref(this.db, `games/${this.currentRoomId}`), updates);
   }
 
   waitForAllPlayersReady() {
     return new Promise((resolve) => {
-      const playersRef = ref(this.db, `rooms/${this.currentRoomId}/players`);
-      const unsubscribe = onValue(playersRef, (snapshot) => {
+      const playersRef = ref(this.db, `games/${this.currentRoomId}/players`);
+      let unsubscribe;
+      let resolved = false;
+
+      unsubscribe = onValue(playersRef, (snapshot) => {
         const players = snapshot.val() || {};
         const allReady = Object.values(players).every(p => {
-          if (p.isCpu) return true; // Ignore CPU
+          if (p.isCpu) return true;
           return p.isReadyForNextRound === true;
         });
 
         if (allReady) {
-          unsubscribe(); // Stop listening
+          if (unsubscribe) {
+            unsubscribe();
+          }
+          resolved = true;
           resolve();
         }
       });
+
+      // If the callback ran synchronously and finished, unsubscribe now.
+      if (resolved && unsubscribe) {
+        unsubscribe();
+      }
     });
   }
 }

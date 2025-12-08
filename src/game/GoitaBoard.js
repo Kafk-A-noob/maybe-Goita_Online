@@ -27,6 +27,26 @@ export class GoitaBoard {
     }
   }
 
+  // Helper to sync turn UID to Firebase (Critical for Write Permissions)
+  async syncTurnToNetwork() {
+    if (!this.isNetworkGame || !this.network.currentRoomId) return;
+
+    // Find UID of the NEW turn player
+    const p = this.players[this.turnPlayerIndex];
+    // If Human, use their ID. If CPU, use Host ID (because Host plays/writes for CPU).
+    // If Human, use their stored Firebase UID. If CPU, use Host ID.
+    let targetUid = p.uid;
+    if (!p.isHuman) {
+      // CPU: The Host controls them, so Host needs write permission.
+      targetUid = this.network.hostId;
+    }
+
+    if (targetUid) {
+      await this.network.updateTurn(targetUid);
+    }
+  }
+
+
   // === Single Player Start ===
   start() {
     this.isNetworkGame = false;
@@ -41,7 +61,7 @@ export class GoitaBoard {
   async startNetworkGame() {
     this.isNetworkGame = true; // Set network flag
     const { get, ref } = await import("firebase/database");
-    const snapshot = await get(ref(this.network.db, `rooms/${this.network.currentRoomId}`));
+    const snapshot = await get(ref(this.network.db, `games/${this.network.currentRoomId}`));
     const roomData = snapshot.val();
 
     // Setup Game UI first
@@ -89,6 +109,8 @@ export class GoitaBoard {
         this.isSubscribedToActions = true;
       }
 
+      // Initial Turn Sync (Host Logic)
+      this.syncTurnToNetwork();
       this.nextTurn();
     } else {
       this.renderer.log(`=== ラウンド ${this.roundCount} 開始 (マルチ:ゲスト) ===`);
@@ -170,6 +192,7 @@ export class GoitaBoard {
       const p = this.players[index];
       p.isHuman = !pData.isCpu; // Set Human/CPU flag
       p.name = pData.name; // Store name
+      p.uid = pData.id; // STORE FIREBASE UID for permission checks
 
       // Update Renderer Names
       if (this.renderer.playerNames) {
@@ -241,12 +264,16 @@ export class GoitaBoard {
         const handsData = this.players.map(p => p.hand.map(c => ({ type: c.type, id: c.id })));
 
         // Send New Round State to Guests
+        // Send New Round State to Guests
         this.network.setInitialState({
           hands: handsData,
           turn: this.turnPlayerIndex,
           round: this.roundCount,
           players: null // No need to resend player info
         });
+
+        // Sync Turn UID for new round
+        this.syncTurnToNetwork();
 
         this.renderer.render(this);
         this.nextTurn();
@@ -560,7 +587,13 @@ export class GoitaBoard {
       if (cleanAction.card2) cleanAction.card2 = { type: cleanAction.card2.type, id: cleanAction.card2.id, isJewel: cleanAction.card2.isJewel };
 
       this.renderer.logNetwork(`Sending Action: P${player.id} ${action.action}`);
-      this.network.sendGameAction(cleanAction);
+      await this.network.sendGameAction(cleanAction);
+
+      // 3. Sync Turn if Changed
+      // If I played, I am responsible for passing the turn (updating the 'turn' UID)
+      // Note: executeActionLogic updated 'this.turnPlayerIndex' already.
+      // logic: I had write permission (my turn), I wrote action. Now I write turn update.
+      await this.syncTurnToNetwork();
     }
     return result;
   }
