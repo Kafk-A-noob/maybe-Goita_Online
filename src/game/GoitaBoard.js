@@ -50,10 +50,6 @@ export class GoitaBoard {
     this.renderer.setupGameUI(); // Switch to Game View
 
     if (this.network.isHost) {
-      // Fetch latest players (including auto-filled NPCs)
-      const { get, ref } = await import("firebase/database");
-      const snapshot = await get(ref(this.network.db, `rooms/${this.network.currentRoomId}`));
-      const roomData = snapshot.val();
       const playersData = roomData.players;
 
       // Setup Local Players
