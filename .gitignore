@@ -4,3 +4,4 @@ dist
 .env
 firebase_config.js
 database.rules.json
+vercel-deploy-notify.ps1
