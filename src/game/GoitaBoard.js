@@ -254,12 +254,13 @@ export class GoitaBoard {
       this.renderer.log("次のラウンドの準備中...");
 
       // 1. Set Ready for the current round (roundCount was already incremented)
-      await this.network.setReadyForNextRound(this.roundCount);
+      // Note: This is done in the button callback now
+      // await this.network.setReadyForNextRound(this.roundCount);
 
       if (this.network.isHost) {
         this.renderer.log("全員の準備完了を待っています...");
-        // Wait for all players to close their modals
-        await this.network.waitForAllModalsClosed();
+        // Wait for all players to be ready
+        await this.network.waitForAllPlayersReady(this.roundCount);
 
         // 3. Reset Ready Flags (REMOVED - No longer needed)
         // await this.network.resetAllPlayersReady();

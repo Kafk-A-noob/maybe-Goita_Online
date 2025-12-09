@@ -618,6 +618,15 @@ export class Renderer {
       }
     }
 
+    // Add ready status section for network games
+    const isNetworkGame = window.game && window.game.isNetworkGame;
+    if (isNetworkGame && !isGameWin) {
+      messageHtml += `<br><br><div id="ready-status" style="margin-top:10px; padding:10px; background:rgba(0,0,0,0.3); border-radius:5px;">
+        <div style="font-size:0.9em; margin-bottom:5px;">準備完了状況:</div>
+        <div id="ready-players" style="font-size:0.85em;"></div>
+      </div>`;
+    }
+
     msg.innerHTML = messageHtml;
 
     if (isGameWin) {
@@ -626,25 +635,32 @@ export class Renderer {
     } else {
       btn.textContent = "次のラウンドへ";
 
-      // Check if network game
-      const isNetworkGame = window.game && window.game.isNetworkGame;
       const isHost = this.network && this.network.isHost;
 
       if (isNetworkGame) {
-        if (isHost) {
-          // Host: Start next round normally
-          this.nextRoundCallback = () => {
+        // Both host and guest: mark ready and wait
+        this.nextRoundCallback = async () => {
+          btn.disabled = true;
+          btn.textContent = "準備完了...";
+
+          const currentRound = window.game.roundCount;
+          await this.network.setReadyForNextRound(currentRound + 1);
+
+          if (isHost) {
+            // Host waits for everyone
+            this.log("全員の準備完了を待っています...");
+            await this.network.waitForAllPlayersReady(currentRound + 1);
             document.getElementById('result-modal').style.display = 'none';
+            if (this.readyStatusUnsubscribe) this.readyStatusUnsubscribe();
             window.game.nextRound(winnerId);
-          };
-        } else {
-          // Guest: Just close modal and notify
-          this.nextRoundCallback = async () => {
-            document.getElementById('result-modal').style.display = 'none';
-            await this.network.setModalClosed();
-            window.game.renderer.log("準備完了しました。ホストの開始を待っています...");
-          };
-        }
+          } else {
+            // Guest just waits (host will trigger next round via network)
+            this.log("ホストが次のラウンドを開始するまで待機中...");
+          }
+        };
+
+        // Start monitoring ready status
+        this.monitorReadyStatus();
       } else {
         // Single player: normal flow
         this.nextRoundCallback = () => {
@@ -655,6 +671,33 @@ export class Renderer {
     }
 
     modal.style.display = 'block';
+  }
+
+  async monitorReadyStatus() {
+    if (!this.network || !this.network.currentRoomId) return;
+
+    const { ref, onValue } = await import("firebase/database");
+    const playersRef = ref(this.network.db, `games/${this.network.currentRoomId}/players`);
+
+    const updateStatus = (snapshot) => {
+      const players = snapshot.val() || {};
+      const currentRound = window.game.roundCount + 1;
+
+      let statusHtml = '';
+      Object.values(players).filter(p => !p.isCpu).forEach(p => {
+        const isReady = p.readyForRound && p.readyForRound >= currentRound;
+        const icon = isReady ? '✅' : '⏳';
+        const status = isReady ? '' : ' - 準備中';
+        const playerName = this.playerNames[p.index] || `プレイヤー${p.index}`;
+        const isMe = p.index === this.localPlayerIndex ? ' (あなた)' : '';
+        statusHtml += `<div>${icon} ${playerName}${isMe}${status}</div>`;
+      });
+
+      const readyDiv = document.getElementById('ready-players');
+      if (readyDiv) readyDiv.innerHTML = statusHtml;
+    };
+
+    this.readyStatusUnsubscribe = onValue(playersRef, updateStatus);
   }
 
   clearField() {
