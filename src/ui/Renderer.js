@@ -618,23 +618,26 @@ export class Renderer {
       }
     }
 
-    // Add ready status section for network games
+    msg.innerHTML = messageHtml;
+
+    // Add ready status section for network games (AFTER innerHTML)
     const isNetworkGame = window.game && window.game.isNetworkGame;
     if (isNetworkGame && !isGameWin) {
-      messageHtml += `<br><br><div id="ready-status" style="margin-top:10px; padding:10px; background:rgba(0,0,0,0.3); border-radius:5px;">
-        <div style="font-size:0.9em; margin-bottom:5px;">準備完了状況:</div>
-        <div id="ready-players" style="font-size:0.85em;"></div>
-      </div>`;
+      const statusDiv = document.createElement('div');
+      statusDiv.id = 'ready-status';
+      statusDiv.style.cssText = 'margin-top:15px; padding:12px; background:rgba(50,50,50,0.8); border-radius:8px; border:1px solid rgba(100,100,100,0.5);';
+      statusDiv.innerHTML = `
+        <div style="font-size:1em; margin-bottom:10px; font-weight:bold; color:#ffd700;">📋 準備完了状況</div>
+        <div id="ready-players" style="font-size:0.9em; line-height:1.8;"></div>
+      `;
+      msg.appendChild(statusDiv);
     }
-
-    msg.innerHTML = messageHtml;
 
     if (isGameWin) {
       btn.textContent = "リロードして再開";
       this.nextRoundCallback = () => location.reload();
     } else {
       btn.textContent = "次のラウンドへ";
-
       const isHost = this.network && this.network.isHost;
 
       if (isNetworkGame) {
