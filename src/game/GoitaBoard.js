@@ -19,6 +19,7 @@ export class GoitaBoard {
     this.isNetworkGame = false;
     this.localPlayerIndex = -1; // Default -1 (Invalid) until identified
     this.isSubscribedToActions = false;
+    this.initialStateSubscribed = false; // Track if we already subscribed to InitialState
 
     // Network Callbacks
     if (this.network) {
@@ -116,32 +117,39 @@ export class GoitaBoard {
       this.renderer.log(`=== ラウンド ${this.roundCount} 開始 (マルチ:ゲスト) ===`);
       this.renderer.log(`ホストの準備を待っています...`);
 
-      // Wait for Initial State
-      this.network.subscribeToInitialState((state) => {
-        if (state.round !== this.roundCount) return;
+      // Wait for Initial State (ONLY ONCE - Reused for all rounds)
+      if (!this.initialStateSubscribed) {
+        this.network.subscribeToInitialState((state) => {
+          // This callback will fire for EVERY round (round 1, 2, 3...)
+          if (state.round !== this.roundCount) {
+            console.log(`Waiting for round ${this.roundCount}, got ${state.round}`);
+            return;
+          }
 
-        // Setup Players from Host's State
-        if (state.players) {
-          this.setupPlayersFromNetwork(state.players);
-        }
+          // Setup Players from Host's State (only needed for first round)
+          if (state.players) {
+            this.setupPlayersFromNetwork(state.players);
+          }
 
-        // Apply State
-        this.players.forEach((p, i) => {
-          const handData = state.hands[i];
-          p.setHand(handData.map(d => new Card(d.type, d.id)));
+          // Apply State
+          this.players.forEach((p, i) => {
+            const handData = state.hands[i];
+            p.setHand(handData.map(d => new Card(d.type, d.id)));
+          });
+          this.turnPlayerIndex = state.turn;
+
+          this.renderer.render(this);
+
+          // Subscribe to game actions (for remote players including host)
+          if (!this.isSubscribedToActions) {
+            this.network.subscribeToGameActions((action) => this.handleRemoteAction(action));
+            this.isSubscribedToActions = true;
+          }
+
+          this.nextTurn();
         });
-        this.turnPlayerIndex = state.turn;
-
-        this.renderer.render(this);
-
-        // Subscribe to game actions (for remote players including host)
-        if (!this.isSubscribedToActions) {
-          this.network.subscribeToGameActions((action) => this.handleRemoteAction(action));
-          this.isSubscribedToActions = true;
-        }
-
-        this.nextTurn();
-      });
+        this.initialStateSubscribed = true;
+      }
     }
   }
 
@@ -282,25 +290,8 @@ export class GoitaBoard {
         this.renderer.log("ホストの開始を待っています...");
 
         // Guest: Wait for new InitialState
-        // Note: We need to subscribe again or ensure the existing subscription handles round updates
-        // The existing subscription in startNetworkGame should handle this if it checks roundCount
-
-        // For safety, we can add a one-time listener for the new round
-        const currentRound = this.roundCount;
-        const unsubscribe = this.network.subscribeToInitialState((state) => {
-          if (state.round !== currentRound) return; // Not our round
-
-          // Apply new hands
-          this.players.forEach((p, i) => {
-            const handData = state.hands[i];
-            p.setHand(handData.map(d => new Card(d.type, d.id)));
-          });
-          this.turnPlayerIndex = state.turn;
-
-          this.renderer.log(`=== ラウンド ${this.roundCount} 開始 (ゲスト) ===`);
-          this.renderer.render(this);
-          this.nextTurn();
-        });
+        // The subscription already exists from startNetworkGame
+        // It will automatically handle the new round's InitialState
       }
     }
   }
