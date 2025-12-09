@@ -625,7 +625,34 @@ export class Renderer {
       this.nextRoundCallback = () => location.reload();
     } else {
       btn.textContent = "次のラウンドへ";
-      this.nextRoundCallback = () => window.game.nextRound(winnerId);
+
+      // Check if network game
+      const isNetworkGame = window.game && window.game.isNetworkGame;
+      const isHost = this.network && this.network.isHost;
+
+      if (isNetworkGame) {
+        if (isHost) {
+          // Host: Start next round normally
+          this.nextRoundCallback = () => {
+            document.getElementById('result-modal').style.display = 'none';
+            window.game.nextRound(winnerId);
+          };
+        } else {
+          // Guest: Just set ready flag and close modal
+          this.nextRoundCallback = async () => {
+            document.getElementById('result-modal').style.display = 'none';
+            const currentRound = window.game.roundCount;
+            await this.network.setReadyForNextRound(currentRound + 1);
+            window.game.renderer.log("準備完了しました。ホストの開始を待っています...");
+          };
+        }
+      } else {
+        // Single player: normal flow
+        this.nextRoundCallback = () => {
+          document.getElementById('result-modal').style.display = 'none';
+          window.game.nextRound(winnerId);
+        };
+      }
     }
 
     modal.style.display = 'block';
