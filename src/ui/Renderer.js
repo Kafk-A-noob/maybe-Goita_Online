@@ -563,6 +563,21 @@ export class Renderer {
     }
   }
 
+  revealLastReceive(playerId, card) {
+    // For counter double-up, highlight the receive card (card1)
+    const pArea = this.container.querySelector(`#player-${playerId}`);
+    if (!pArea) return;
+
+    const rowRec = pArea.querySelector('.row-receive');
+    const cards = rowRec.querySelectorAll('.card');
+    const lastCard = cards[cards.length - 1]; // Get the last card in receive row
+
+    if (lastCard) {
+      lastCard.style.color = "#f1c40f"; // Highlight double card
+      lastCard.style.fontWeight = "bold";
+    }
+  }
+
   updateScores(scores) {
     const s0 = document.getElementById('score-0');
     const s1 = document.getElementById('score-1');

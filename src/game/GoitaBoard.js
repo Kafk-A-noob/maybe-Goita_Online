@@ -744,6 +744,12 @@ export class GoitaBoard {
 
         const isDouble = (card1.type === card2.type);
 
+        // Reveal the receive card if it's a double
+        if (isDouble) {
+          // For counter, card1 is already visible (not hidden), but we highlight it
+          this.renderer.revealLastReceive(player.id, card1);
+        }
+
         const roundEnded = await this.checkWin(player, isDouble);
 
         if (!this.gameOver && !roundEnded) {
