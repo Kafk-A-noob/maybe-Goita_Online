@@ -389,4 +389,47 @@ export class NetworkManager {
       if (resolved && unsubscribe) unsubscribe();
     });
   }
+
+  // Modal closed notification (no turn permission required)
+  async setModalClosed() {
+    if (!this.currentRoomId) return;
+    const { set, ref } = await import("firebase/database");
+    // Use a separate node that doesn't require turn permission
+    await set(ref(this.db, `games/${this.currentRoomId}/modalStatus/${this.playerId}`), {
+      closed: true,
+      timestamp: Date.now()
+    });
+  }
+
+  // Host: Wait for all players to close modal
+  async waitForAllModalsClosed() {
+    const { get, ref, onValue } = await import("firebase/database");
+
+    return new Promise(async (resolve) => {
+      const modalRef = ref(this.db, `games/${this.currentRoomId}/modalStatus`);
+      let unsubscribe;
+
+      unsubscribe = onValue(modalRef, async (snapshot) => {
+        const modalStatuses = snapshot.val() || {};
+
+        // Get current players
+        const playersSnap = await get(ref(this.db, `games/${this.currentRoomId}/players`));
+        const players = playersSnap.val() || {};
+
+        // Check if all non-CPU players have closed their modals
+        const allClosed = Object.values(players).every(p => {
+          if (p.isCpu) return true;
+          return modalStatuses[p.id] && modalStatuses[p.id].closed;
+        });
+
+        if (allClosed) {
+          if (unsubscribe) unsubscribe();
+          // Clear modal statuses for next round
+          const { set } = await import("firebase/database");
+          await set(ref(this.db, `games/${this.currentRoomId}/modalStatus`), null);
+          resolve();
+        }
+      });
+    });
+  }
 }

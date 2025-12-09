@@ -258,8 +258,8 @@ export class GoitaBoard {
 
       if (this.network.isHost) {
         this.renderer.log("全員の準備完了を待っています...");
-        // 2. Wait for everyone to be ready for this round
-        await this.network.waitForAllPlayersReady(this.roundCount);
+        // Wait for all players to close their modals
+        await this.network.waitForAllModalsClosed();
 
         // 3. Reset Ready Flags (REMOVED - No longer needed)
         // await this.network.resetAllPlayersReady();

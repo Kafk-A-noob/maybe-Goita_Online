@@ -638,11 +638,10 @@ export class Renderer {
             window.game.nextRound(winnerId);
           };
         } else {
-          // Guest: Just set ready flag and close modal
+          // Guest: Just close modal and notify
           this.nextRoundCallback = async () => {
             document.getElementById('result-modal').style.display = 'none';
-            const currentRound = window.game.roundCount;
-            await this.network.setReadyForNextRound(currentRound + 1);
+            await this.network.setModalClosed();
             window.game.renderer.log("準備完了しました。ホストの開始を待っています...");
           };
         }
