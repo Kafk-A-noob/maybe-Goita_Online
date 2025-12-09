@@ -17,6 +17,7 @@ database.rules.json
 .firebase
 .firebaserc
 firebase-debug.log*
+firebase-database-rules.json
 
 # OS files
 .DS_Store
