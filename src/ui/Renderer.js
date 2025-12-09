@@ -433,19 +433,29 @@ export class Renderer {
     handEl.innerHTML = '';
 
     const isMe = (player.id === this.localPlayerIndex);
+    const shouldRevealShi = player.revealHand || false; // Reveal only "shi" cards
 
     player.hand.forEach(card => {
       const cardEl = document.createElement('div');
       cardEl.className = 'card';
 
-      // Only show face if it's ME
-      if (!isMe) {
+      const isShi = (card.type === 'し'); // Check if this is a "shi" card
+
+      // Show face if it's ME, or if it's a "shi" card and hand reveal is active
+      if (!isMe && !(shouldRevealShi && isShi)) {
         cardEl.classList.add('hidden');
       } else {
         cardEl.textContent = card.isJewel ? "玉" : card.type;
-        cardEl.onclick = () => this.toggleSelect(card, cardEl);
-        // Double click interaction
-        cardEl.ondblclick = () => this.handleDoubleClick(card, cardEl);
+        if (isMe) {
+          cardEl.onclick = () => this.toggleSelect(card, cardEl);
+          // Double click interaction
+          cardEl.ondblclick = () => this.handleDoubleClick(card, cardEl);
+        }
+        if (shouldRevealShi && !isMe && isShi) {
+          // Add visual indicator that this "shi" card is revealed
+          cardEl.style.border = '2px solid #ffd700';
+          cardEl.style.backgroundColor = '#fffacd';
+        }
       }
 
       if (this.selectedCards.find(c => c.id === card.id)) {
@@ -560,7 +570,7 @@ export class Renderer {
     if (s1) s1.textContent = scores[1];
   }
 
-  showRoundResult(winnerId, score, isGameWin) {
+  showRoundResult(winnerId, score, isGameWin, condition = null) {
     const modal = document.getElementById('result-modal');
     const title = document.getElementById('result-title');
     const msg = document.getElementById('result-msg');
@@ -570,7 +580,30 @@ export class Renderer {
     const winText = isGameWin ? "勝負あり！" : "ラウンド終了";
 
     title.textContent = winText;
-    msg.innerHTML = `勝者: プレイヤー ${winnerId} (${teamName})<br>得点: +${score}`;
+
+    // Build message with special win info if applicable
+    let messageHtml = `勝者: プレイヤー ${winnerId} (${teamName})<br>得点: +${score}`;
+
+    if (condition) {
+      const conditionNames = {
+        '8shi': '８し',
+        '7shi': '７し',
+        '6shi': '６し',
+        '5shi': '５し',
+        'team5shi': '味方五し'
+      };
+      const conditionName = conditionNames[condition.type] || condition.type;
+      messageHtml += `<br><strong>特殊勝利: ${conditionName}</strong>`;
+
+      if (condition.playerId !== undefined) {
+        messageHtml += `<br><span style="font-size:0.9em">プレイヤー ${condition.playerId} の手札が公開されました</span>`;
+      } else if (condition.type === 'team5shi') {
+        const team = condition.team;
+        messageHtml += `<br><span style="font-size:0.9em">プレイヤー ${team} と ${team + 2} の手札が公開されました</span>`;
+      }
+    }
+
+    msg.innerHTML = messageHtml;
 
     if (isGameWin) {
       btn.textContent = "リロードして再開";

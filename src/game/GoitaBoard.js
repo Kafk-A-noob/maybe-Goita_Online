@@ -238,6 +238,9 @@ export class GoitaBoard {
     this.passCount = 0;
     this.visibleKingCount = 0;
 
+    // Reset hand reveal flags for all players
+    this.players.forEach(p => p.revealHand = false);
+
     this.renderer.clearField();
 
     if (!this.isNetworkGame) {
@@ -384,6 +387,20 @@ export class GoitaBoard {
 
   handleSpecialWin(condition) {
     this.renderer.log(`特殊勝利条件: ${condition.type}`);
+
+    // Reveal the hand of the player(s) who triggered the special win
+    if (condition.playerId !== undefined) {
+      const player = this.players[condition.playerId];
+      player.revealHand = true; // Mark this player's hand as revealed
+      this.renderer.render(this); // Update UI to show the hand
+    } else if (condition.type === 'team5shi') {
+      // For team 5 shi, reveal both players' hands
+      const team = condition.team;
+      this.players[team].revealHand = true;
+      this.players[team + 2].revealHand = true;
+      this.renderer.render(this);
+    }
+
     // Delay to let UI render
     setTimeout(() => {
       let winnerId = condition.playerId;
@@ -393,9 +410,9 @@ export class GoitaBoard {
       this.teamScores[winnerId % 2] += condition.score;
       this.renderer.updateScores(this.teamScores);
 
-      // Show Result
+      // Show Result (pass condition for hand reveal info)
       this.gameOver = true; // Round Over actually
-      this.renderer.showRoundResult(winnerId, condition.score, this.teamScores.some(s => s >= 150));
+      this.renderer.showRoundResult(winnerId, condition.score, this.teamScores.some(s => s >= 150), condition);
 
       if (this.isNetworkGame) {
         this.network.sendSpecialWin(condition);
