@@ -647,12 +647,14 @@ export class Renderer {
           btn.textContent = "準備完了...";
 
           const currentRound = window.game.roundCount;
-          await this.network.setReadyForNextRound(currentRound + 1);
+          const nextRound = currentRound + 1;
+          await this.network.setReadyForNextRound(nextRound);
 
           if (isHost) {
             // Host waits for everyone
-            this.log("全員の準備完了を待っています...");
-            await this.network.waitForAllPlayersReady(currentRound + 1);
+            this.log(`全員の準備完了を待っています... (ラウンド${nextRound})`);
+            await this.network.waitForAllPlayersReady(nextRound);
+            this.log("全員準備完了！次のラウンドを開始します");
             document.getElementById('result-modal').style.display = 'none';
             if (this.readyStatusUnsubscribe) this.readyStatusUnsubscribe();
             window.game.nextRound(winnerId);

@@ -253,19 +253,11 @@ export class GoitaBoard {
       // Network Round Reset
       this.renderer.log("次のラウンドの準備中...");
 
-      // 1. Set Ready for the current round (roundCount was already incremented)
-      // Note: This is done in the button callback now
-      // await this.network.setReadyForNextRound(this.roundCount);
+      // Note: Ready flag setting and waiting is done in the button callback (Renderer.js)
+      // This nextRound() is only called AFTER all players are ready
 
       if (this.network.isHost) {
-        this.renderer.log("全員の準備完了を待っています...");
-        // Wait for all players to be ready
-        await this.network.waitForAllPlayersReady(this.roundCount);
-
-        // 3. Reset Ready Flags (REMOVED - No longer needed)
-        // await this.network.resetAllPlayersReady();
-
-        // 4. Start New Round (HOST)
+        // Host: Start New Round
         this.renderer.log(`=== ラウンド ${this.roundCount} 開始 (ホスト) ===`);
 
         // Create new deck and deal
