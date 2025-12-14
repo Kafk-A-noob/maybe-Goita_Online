@@ -553,7 +553,8 @@ export class Renderer {
     if (!pArea) return;
 
     const rowRec = pArea.querySelector('.row-receive');
-    const hiddenCard = rowRec.querySelector('.lead-hidden');
+    const hiddenCards = rowRec.querySelectorAll('.lead-hidden');
+    const hiddenCard = hiddenCards.length > 0 ? hiddenCards[hiddenCards.length - 1] : null;
 
     if (hiddenCard) {
       hiddenCard.classList.remove('hidden');
