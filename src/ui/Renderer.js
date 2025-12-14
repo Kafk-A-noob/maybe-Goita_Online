@@ -591,6 +591,7 @@ export class Renderer {
     const title = document.getElementById('result-title');
     const msg = document.getElementById('result-msg');
     const btn = document.getElementById('btn-next-round');
+    if (btn) btn.disabled = false; // Reset disabled state from previous round
 
     const teamName = (winnerId % 2 === 0) ? "チームA" : "チームB";
     const winText = isGameWin ? "勝負あり！" : "ラウンド終了";
