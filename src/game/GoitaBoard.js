@@ -132,6 +132,9 @@ export class GoitaBoard {
           // モーダルを閉じる (ゲスト側でラウンド開始時に自動で閉じる)
           this.renderer.closeResultModal();
 
+          // 状態のリセット (盤面クリアなど)
+          this.resetLocalRoundState();
+
           // ホストの状態からプレイヤーを設定（初回のみ必要）
           if (state.players) {
             this.setupPlayersFromNetwork(state.players);
@@ -234,6 +237,17 @@ export class GoitaBoard {
 
     this.renderer.setLocalPlayer(this.localPlayerIndex);
     this.renderer.updateNameTags();
+  }
+
+  // ラウンド開始時のローカル状態リセット (ゲスト用)
+  resetLocalRoundState() {
+    this.currentAttack = null;
+    this.passCount = 0;
+    this.visibleKingCount = 0;
+    this.gameOver = false;
+    this.players.forEach(p => p.revealHand = false);
+    this.renderer.clearField();
+    this.renderer.log("ラウンド状態をリセットしました");
   }
 
   async nextRound(winnerId) {
