@@ -54,7 +54,7 @@ export class GoitaBoard {
     this.deal();
     this.renderer.render(this);
     this.renderer.log(`=== ラウンド ${this.roundCount} 開始 (シングル) ===`);
-    this.nextTurn();
+    // deal() -> checkHandConditions() calls nextTurn() or handles conditions
   }
 
   // === ネットワークゲーム開始 ===
@@ -111,7 +111,7 @@ export class GoitaBoard {
 
       // 初回の手番同期（ホストロジック）
       this.syncTurnToNetwork();
-      this.nextTurn();
+      // deal() calls nextTurn() via checkHandConditions
     } else {
       this.renderer.log(`=== ラウンド ${this.roundCount} 開始 (マルチ:ゲスト) ===`);
       this.renderer.log(`ホストの準備を待っています...`);
@@ -284,6 +284,7 @@ export class GoitaBoard {
         this.renderer.log(`ID一致: プレイヤー ${index} として参加`);
         this.localPlayerIndex = index;
         p.isHuman = true; // 私は人間
+        this.renderer.playerNames[index] = pData.name + " (あなた)";
       }
     });
 
@@ -325,7 +326,7 @@ export class GoitaBoard {
       this.deal();
       this.renderer.render(this);
       this.renderer.log(`=== ラウンド ${this.roundCount} 開始 ===`);
-      this.nextTurn();
+      // deal() calls nextTurn() via checkHandConditions
     } else {
 
       // ネットワークラウンドのリセット
@@ -369,7 +370,7 @@ export class GoitaBoard {
           this.syncTurnToNetwork();
 
           this.renderer.render(this);
-          this.nextTurn();
+          // deal() calls nextTurn() via checkHandConditions
         } else {
           this.renderer.log("ホストの開始を待っています...");
         }
@@ -528,41 +529,59 @@ export class GoitaBoard {
 
   // 宣言結果の受信処理
   async handleFiveShiDeclaration(playerId, declared) {
-    // ネットワーク同期（自分がホストでローカル処理した場合、または受信した場合）
     if (this.isNetworkGame && this.network.isHost) {
       this.network.sendFiveShiDeclaration({ type: 'result', playerId, declared });
     }
 
     const currentCondition = this.pendingConditions ? this.pendingConditions[this.currentConditionIndex] : null;
+    const pName = this.getPlayerName(playerId);
 
     if (declared) {
-      this.renderer.log(`プレイヤー ${playerId} が「五し」を宣言しました！`);
-      // 宣言された場合 -> 相方の判断へ
+      this.renderer.log(`${pName} が「五し」を宣言しました！`);
       if (currentCondition) {
-        // 単独5しの場合のみ相方判断。敵味方5しの場合は一旦保留リストに入れるロジックが必要だが、
-        // checkHandConditionsで単独か複数かは判定済みか？
-        // 元のロジックでは conditions リストに入っている。
-        // ここではシンプルに「宣言されたら相方チェック」に進む。
-
-        // EnemyAlly logic is complex inside sequential check.
-        // Let's simplify: Only Single Five Shi triggers partner check immediately.
-        // If multiple 5shis exist, we handle them sequentially?
-        // Actually, if P0 declares 5shi, P2 decides redeal -> Redeal immediately ends round.
-        // So sequential is fine.
-
         const partnerId = (playerId + 2) % 4;
         this.askPartnerRedeal(playerId, partnerId);
       }
     } else {
-      this.renderer.log(`プレイヤー ${playerId} は宣言しませんでした。`);
-      // 次の条件へ
+      this.renderer.log(`${pName} は宣言しませんでした。`);
       this.currentConditionIndex++;
       this.processNextCondition();
     }
   }
 
+  handleNetworkFiveShiDeclaration(data) {
+    if (data.type === 'check') {
+      if (data.playerId === this.localPlayerIndex) {
+        const pName = this.getPlayerName(data.playerId);
+        this.renderer.log(`${pName} (あなた) の五し宣言を確認中...`);
+        setTimeout(() => {
+          this.renderer.showFiveShiDialog(
+            () => {
+              this.network.sendFiveShiDeclaration({ type: 'result', playerId: this.localPlayerIndex, declared: true });
+            },
+            () => {
+              this.network.sendFiveShiDeclaration({ type: 'result', playerId: this.localPlayerIndex, declared: false });
+            }
+          );
+        }, 100);
+      } else {
+        const pName = this.getPlayerName(data.playerId);
+        this.renderer.log(`${pName} が五しの宣言を検討中...`);
+      }
+    } else if (data.type === 'result') {
+      if (this.network.isHost) {
+        this.handleFiveShiDeclaration(data.playerId, data.declared);
+      } else {
+        const pName = this.getPlayerName(data.playerId);
+        if (data.declared) this.renderer.log(`${pName} が五しを宣言しました！`);
+        else this.renderer.log(`${pName} は宣言しませんでした。`);
+      }
+    }
+  }
+
   askPartnerRedeal(declarerId, partnerId) {
-    this.renderer.log(`相方(P${partnerId}) が配り直しを判断中...`);
+    const partnerName = this.getPlayerName(partnerId);
+    this.renderer.log(`相方(${partnerName}) が配り直しを判断中...`);
 
     if (!this.isNetworkGame) {
       if (partnerId === 0) { // Local Human
@@ -588,20 +607,46 @@ export class GoitaBoard {
     }
 
     if (redeal) {
-      this.renderer.log(`P${partnerId} が配り直しを選択しました。`);
+      this.renderer.log(`${this.getPlayerName(partnerId)} が配り直しを選択しました。`);
       if (this.isNetworkGame) {
         if (this.network.isHost) this.network.sendRedeal(); // ホストがRedeal命令
       } else {
         this.redeal();
       }
     } else {
-      this.renderer.log(`P${partnerId} は続行を選択しました。`);
+      this.renderer.log(`${this.getPlayerName(partnerId)} は続行を選択しました。`);
       // 次の条件へ（もしあれば）
       this.currentConditionIndex++;
       this.processNextCondition();
     }
   }
 
+  handleNetworkPartnerDecision(data) {
+    if (data.type === 'check') {
+      if (data.partnerId === this.localPlayerIndex) {
+        const pName = this.getPlayerName(data.partnerId);
+        this.renderer.log(`${pName} (あなた) が配り直しを判断中...`);
+        setTimeout(() => {
+          this.renderer.showPartnerRedealDialog(
+            data.declarerId,
+            () => this.network.sendPartnerDecision({ type: 'result', partnerId: this.localPlayerIndex, redeal: true }),
+            () => this.network.sendPartnerDecision({ type: 'result', partnerId: this.localPlayerIndex, redeal: false })
+          );
+        }, 100);
+      } else {
+        const pName = this.getPlayerName(data.partnerId);
+        this.renderer.log(`${pName} が配り直しを判断中...`);
+      }
+    } else if (data.type === 'result') {
+      if (this.network.isHost) {
+        this.handlePartnerDecision(data.partnerId, data.redeal);
+      } else {
+        const pName = this.getPlayerName(data.partnerId);
+        const choice = data.redeal ? "配り直し" : "続行";
+        this.renderer.log(`${pName} は ${choice} を選択しました。`);
+      }
+    }
+  }
   handleSpecialWin(condition) {
     this.renderer.log(`特殊勝利条件: ${condition.type}`);
 
@@ -637,14 +682,25 @@ export class GoitaBoard {
     }, 1000);
   }
 
+  getPlayerName(index) {
+    if (this.renderer && this.renderer.playerNames && this.renderer.playerNames[index]) {
+      return this.renderer.playerNames[index];
+    }
+    const p = this.players[index];
+    if (p && !p.isHuman) {
+      return `CPU ${index}`;
+    }
+    return `プレイヤー ${index}`;
+  }
+
   handleFiveShiScenarios(fiveShiList) {
-    const playerIds = fiveShiList.map(c => c.playerId);
-    this.renderer.log(`五し: プレイヤー ${playerIds.join(', ')}`);
+    const names = fiveShiList.map(c => this.getPlayerName(c.playerId));
+    this.renderer.log(`五し: ${names.join(', ')}`);
 
     // 味方五しは上記で処理済み
     // 敵・味方それぞれの五し判定
-    const team0Count = playerIds.filter(id => id % 2 === 0).length;
-    const team1Count = playerIds.filter(id => id % 2 === 1).length;
+    const team0Count = fiveShiList.filter(c => c.playerId % 2 === 0).length;
+    const team1Count = fiveShiList.filter(c => c.playerId % 2 === 1).length;
 
     if (team0Count > 0 && team1Count > 0) {
       // 敵味方五し: 両方の相方が配り直しを選択する必要がある
@@ -658,7 +714,10 @@ export class GoitaBoard {
   handleSingleFiveShi(condition) {
     const playerId = condition.playerId;
     const partnerId = (playerId + 2) % 4;
-    this.renderer.log(`プレイヤー ${playerId} が「五し」。相方(P${partnerId})が判断します。`);
+    const pName = this.getPlayerName(playerId);
+    const partnerName = this.getPlayerName(partnerId);
+
+    this.renderer.log(`${pName} が「五し」。相方(${partnerName})が判断します。`);
 
     if (!this.isNetworkGame) {
       // シングルプレイ: 相方に尋ねる
@@ -670,7 +729,7 @@ export class GoitaBoard {
         );
       } else {
         // CPUの相方: 自動判断 (現在は配り直し)
-        this.renderer.log(`CPU (P${partnerId}) が配り直しを選択しました。`);
+        this.renderer.log(`CPU (${partnerName}) が配り直しを選択しました。`);
         setTimeout(() => this.redeal(), 1000);
       }
     } else {
@@ -836,6 +895,10 @@ export class GoitaBoard {
   async handleRemoteAction(remoteAction) {
     this.renderer.logNetwork(`Received Action: P${remoteAction.playerIndex} ${remoteAction.action}`);
     // console.log("Received Remote Action:", remoteAction);
+    if (this.gameOver) return; // Prevent action if game ended
+
+    // Check if this action is for the current/expected turn?
+    // NetworkManager ensures order but logical check is good.
 
     if (remoteAction.playerIndex === this.localPlayerIndex) {
       this.renderer.logNetwork(`IGNORED (Self Index: ${this.localPlayerIndex})`);
@@ -860,11 +923,14 @@ export class GoitaBoard {
       remoteAction.card2 = c;
     }
 
-    this.renderer.log(`Remote Action from P${player.id}`);
+    const pName = this.getPlayerName(player.id);
+    this.renderer.log(`${pName} のアクション`); // Localized log
     await this.executeActionLogic(player, remoteAction);
 
     // Resume Turn Loop (After Remote Action)
-    this.nextTurn();
+    if (!this.gameOver) {
+      this.nextTurn();
+    }
   }
 
   // 再利用のためのロジック分離
@@ -874,7 +940,8 @@ export class GoitaBoard {
         return { valid: false, reason: "攻めの手番ではパスできません" };
       }
       this.passCount++;
-      this.renderer.log(`プレイヤー ${player.id}: なし`);
+      const pName = this.getPlayerName(player.id);
+      this.renderer.log(`${pName}: なし`);
 
       if (this.passCount >= 3) {
         const winnerIndex = this.currentAttack.playerIndex;
@@ -912,7 +979,8 @@ export class GoitaBoard {
         player.removeCard(card2);
 
         const cardName = card2.isJewel ? "玉" : card2.type;
-        this.renderer.log(`プレイヤー ${player.id} 攻め: [伏せ] -> ${cardName}`);
+        const pName = this.getPlayerName(player.id);
+        this.renderer.log(`${pName} 攻め: [伏せ] -> ${cardName}`);
         this.renderer.showPlay(player.id, card1, card2, true);
 
         if (card2.type === CARD_TYPES.KING) this.visibleKingCount++;
@@ -956,7 +1024,8 @@ export class GoitaBoard {
 
         const c1Name = card1.isJewel ? "玉" : card1.type;
         const c2Name = card2.isJewel ? "玉" : card2.type;
-        this.renderer.log(`プレイヤー ${player.id} 受け・攻め: ${c1Name} -> ${c2Name}`);
+        const pName = this.getPlayerName(player.id);
+        this.renderer.log(`${pName} 受け・攻め: ${c1Name} -> ${c2Name}`);
         this.renderer.showPlay(player.id, card1, card2, false);
 
         if (card1.type === CARD_TYPES.KING) this.visibleKingCount++;

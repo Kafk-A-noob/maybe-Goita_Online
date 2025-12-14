@@ -269,8 +269,8 @@ export class Renderer {
     board.innerHTML = `
             <div id="center-info">
                  <div class="score-board">
-                    <div class="team-score team-0">チームA (<span id="name-0-score">${this.playerNames[0]}</span>): <span id="score-0">0</span></div>
-                    <div class="team-score team-1">チームB (CPU): <span id="score-1">0</span></div>
+                    <div class="team-score team-0">チームA: <span id="score-0">0</span></div>
+                    <div class="team-score team-1">チームB: <span id="score-1">0</span></div>
                  </div>
                  <div id="turn-info" style="margin-top: 10px; background: rgba(0,0,0,0.6); color: white; padding: 5px 10px; border-radius: 4px;">準備中...</div>
                  <div id="log-short"></div>
@@ -592,13 +592,15 @@ export class Renderer {
     const msg = document.getElementById('result-msg');
     const btn = document.getElementById('btn-next-round');
 
-    const teamName = (winnerId % 2 === 0) ? "チームA (あなた/味方)" : "チームB (相手)";
+    const teamName = (winnerId % 2 === 0) ? "チームA" : "チームB";
     const winText = isGameWin ? "勝負あり！" : "ラウンド終了";
 
     title.textContent = winText;
 
+    const winnerName = this.playerNames[winnerId] || `プレイヤー ${winnerId}`;
+
     // Build message with special win info if applicable
-    let messageHtml = `勝者: プレイヤー ${winnerId} (${teamName})<br>得点: +${score}`;
+    let messageHtml = `勝者: ${winnerName} (${teamName})<br>得点: +${score}`;
 
     if (condition) {
       const conditionNames = {
