@@ -886,7 +886,9 @@ export class GoitaBoard {
     }
 
     // Resume Turn Loop (After Action + Network Sync)
-    this.nextTurn();
+    if (!this.gameOver && !result.roundEnded) {
+      this.nextTurn();
+    }
 
     return result;
   }
@@ -924,10 +926,10 @@ export class GoitaBoard {
 
     const pName = this.getPlayerName(player.id);
     this.renderer.log(`${pName} のアクション`); // Localized log
-    await this.executeActionLogic(player, remoteAction);
+    const result = await this.executeActionLogic(player, remoteAction);
 
     // Resume Turn Loop (After Remote Action)
-    if (!this.gameOver) {
+    if (!this.gameOver && !result.roundEnded) {
       this.nextTurn();
     }
   }
@@ -1001,7 +1003,7 @@ export class GoitaBoard {
           this.turnPlayerIndex = (this.turnPlayerIndex + 1) % 4;
           // nextTurn() removed - called by caller
         }
-        return { valid: true };
+        return { valid: true, roundEnded: (this.gameOver || roundEnded) };
 
       } else {
         // === 受け (COUNTER) ===
@@ -1049,7 +1051,7 @@ export class GoitaBoard {
           this.turnPlayerIndex = (this.turnPlayerIndex + 1) % 4;
           // nextTurn() removed - called by caller
         }
-        return { valid: true };
+        return { valid: true, roundEnded: (this.gameOver || roundEnded) };
       }
     }
   }
