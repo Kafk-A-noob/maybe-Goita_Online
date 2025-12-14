@@ -160,6 +160,19 @@ export class GoitaBoard {
         this.initialStateSubscribed = true;
       }
     }
+
+    // Listener for Manual Five Shi (Host & Guest)
+    // Avoid double subscription
+    if (!this.fiveShiSubscribed) {
+      this.network.subscribeToSpecialEvents({
+        onSpecialWin: (cond) => this.handleSpecialWin(cond),
+        onFiveShi: (cond) => { /* Legacy auto-handler, maybe unused now */ },
+        onRedeal: () => this.redeal(),
+        onFiveShiDeclaration: (data) => this.handleNetworkFiveShiDeclaration(data),
+        onPartnerDecision: (data) => this.handleNetworkPartnerDecision(data)
+      });
+      this.fiveShiSubscribed = true;
+    }
   }
 
   async restoreState(state, actions) {
@@ -389,16 +402,154 @@ export class GoitaBoard {
     }
 
     // 優先順位: 味方五し > 8し > 7し > 6し > 5し
-    const winCondition = conditions.find(c => ['team5shi', '8shi', '7shi', '6shi'].includes(c.type));
-    if (winCondition) {
-      this.handleSpecialWin(winCondition);
+    // ただし、全ての条件について「宣言」の確認を行うフローに変更
+    if (conditions.length > 0) {
+      this.startManualConditionCheck(conditions);
+    } else {
+      // 何もなければゲーム開始
+      this.nextTurn();
+    }
+  }
+
+  // 手札条件の手動チェックフロー開始
+  async startManualConditionCheck(conditions) {
+    this.pendingConditions = conditions;
+    this.currentConditionIndex = 0;
+    this.processNextCondition();
+  }
+
+  processNextCondition() {
+    if (this.currentConditionIndex >= this.pendingConditions.length) {
+      // 全ての条件チェック完了 -> 有効なものがなければゲーム開始、あれば処理済み
+      // ここに来る＝全てスルーされた場合
+      this.pendingConditions = null;
+      this.nextTurn();
       return;
     }
 
-    // 五しの処理
-    const fiveShiList = conditions.filter(c => c.type === '5shi');
-    if (fiveShiList.length > 0) {
-      this.handleFiveShiScenarios(fiveShiList);
+    const condition = this.pendingConditions[this.currentConditionIndex];
+    const player = this.players[condition.playerId !== undefined ? condition.playerId : condition.team]; // team5shiの場合はteamIDを使用
+
+    // 自動処理される条件（8し、7し、6し、味方5し）は即座に適用（ルールによるが、今回は5しのみ手動とするか、全て手動とするか）
+    // 要望は「5し等のルールの状況が発生したら宣言するかどうかのボタン...」なので、5し以外も対象と解釈可能だが、
+    // 8し等は即勝利なので宣言しない理由がない。
+    // しかし、5しは「配り直し」のリスクがあるため戦略的スルーがあり得る。
+    // ここでは「5し」のみ手動宣言とし、他は自動適用とする（または要望に合わせて全て手動にする）
+
+    // User Request: 「5し」ルールの宣言動作。
+    // 一般的に8し等は強制勝利/得点なので自動でよいが、UI統一のため全てダイアログを出す設計も可。
+    // 今回は「5し」のみ特別扱いする実装にする。
+
+    if (condition.type === '5shi') {
+      this.renderer.log(`プレイヤー ${player.id} に「五し」の可能性があります...`);
+
+      // 本人に確認
+      if (!this.isNetworkGame) {
+        if (player.isHuman) {
+          this.renderer.showFiveShiDialog(
+            () => this.handleFiveShiDeclaration(player.id, true),
+            () => this.handleFiveShiDeclaration(player.id, false)
+          );
+        } else {
+          // CPU: 確率で宣言（とりあえず100%宣言）
+          setTimeout(() => this.handleFiveShiDeclaration(player.id, true), 1000);
+        }
+      } else {
+        // ネットワーク: ホストが該当プレイヤーに「宣言判断依頼」を送る必要はない。
+        // ホスト側で検知しているので、該当プレイヤーにUIを出させるメッセージを送る。
+        // NetworkManagerに sendAskForDeclaration(playerId) が必要だが、
+        // 既存の仕組みに乗せるなら、checkHandConditionsはホストのみ実行なので、
+        // ホストから全クライアントに「P_X has condition option」を通知し、
+        // P_Xのクライアントが反応してUIを出し、結果を返す。
+
+        // 簡略化のため、ホストが全クライアントに「DeclarationCheck」イベントを投げる
+        this.network.sendFiveShiDeclaration({
+          type: 'check',
+          playerId: player.id,
+          condition: condition
+        });
+      }
+    } else {
+      // 5し以外（即勝利系）は自動適用
+      this.handleSpecialWin(condition);
+      // 特殊勝利でゲーム終わるならここで終了だが、続行なら次へ？
+      // handleSpecialWin内で gameOver = true になるのでループは止まるはず
+    }
+  }
+
+  // 宣言結果の受信処理
+  async handleFiveShiDeclaration(playerId, declared) {
+    // ネットワーク同期（自分がホストでローカル処理した場合、または受信した場合）
+    if (this.isNetworkGame && this.network.isHost) {
+      this.network.sendFiveShiDeclaration({ type: 'result', playerId, declared });
+    }
+
+    const currentCondition = this.pendingConditions ? this.pendingConditions[this.currentConditionIndex] : null;
+
+    if (declared) {
+      this.renderer.log(`プレイヤー ${playerId} が「五し」を宣言しました！`);
+      // 宣言された場合 -> 相方の判断へ
+      if (currentCondition) {
+        // 単独5しの場合のみ相方判断。敵味方5しの場合は一旦保留リストに入れるロジックが必要だが、
+        // checkHandConditionsで単独か複数かは判定済みか？
+        // 元のロジックでは conditions リストに入っている。
+        // ここではシンプルに「宣言されたら相方チェック」に進む。
+
+        // EnemyAlly logic is complex inside sequential check.
+        // Let's simplify: Only Single Five Shi triggers partner check immediately.
+        // If multiple 5shis exist, we handle them sequentially?
+        // Actually, if P0 declares 5shi, P2 decides redeal -> Redeal immediately ends round.
+        // So sequential is fine.
+
+        const partnerId = (playerId + 2) % 4;
+        this.askPartnerRedeal(playerId, partnerId);
+      }
+    } else {
+      this.renderer.log(`プレイヤー ${playerId} は宣言しませんでした。`);
+      // 次の条件へ
+      this.currentConditionIndex++;
+      this.processNextCondition();
+    }
+  }
+
+  askPartnerRedeal(declarerId, partnerId) {
+    this.renderer.log(`相方(P${partnerId}) が配り直しを判断中...`);
+
+    if (!this.isNetworkGame) {
+      if (partnerId === 0) { // Local Human
+        this.renderer.showPartnerRedealDialog(
+          declarerId,
+          () => this.handlePartnerDecision(partnerId, true),
+          () => this.handlePartnerDecision(partnerId, false)
+        );
+      } else {
+        // CPU
+        setTimeout(() => this.handlePartnerDecision(partnerId, true), 1000);
+      }
+    } else {
+      if (this.network.isHost) {
+        this.network.sendPartnerDecision({ type: 'check', partnerId, declarerId });
+      }
+    }
+  }
+
+  async handlePartnerDecision(partnerId, redeal) {
+    if (this.isNetworkGame && this.network.isHost) {
+      this.network.sendPartnerDecision({ type: 'result', partnerId, redeal });
+    }
+
+    if (redeal) {
+      this.renderer.log(`P${partnerId} が配り直しを選択しました。`);
+      if (this.isNetworkGame) {
+        if (this.network.isHost) this.network.sendRedeal(); // ホストがRedeal命令
+      } else {
+        this.redeal();
+      }
+    } else {
+      this.renderer.log(`P${partnerId} は続行を選択しました。`);
+      // 次の条件へ（もしあれば）
+      this.currentConditionIndex++;
+      this.processNextCondition();
     }
   }
 

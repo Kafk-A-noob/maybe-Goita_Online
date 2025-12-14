@@ -333,6 +333,8 @@ export class NetworkManager {
     if (!this.currentRoomId) return;
     const updates = {};
     updates[`games/${this.currentRoomId}/fiveShi`] = null;
+    updates[`games/${this.currentRoomId}/fiveShiDeclaration`] = null;
+    updates[`games/${this.currentRoomId}/partnerDecision`] = null;
     updates[`games/${this.currentRoomId}/redeal`] = Date.now();
     await update(ref(this.db), updates);
   }
@@ -355,6 +357,27 @@ export class NetworkManager {
       const val = snapshot.val();
       if (val && callbacks.onRedeal) callbacks.onRedeal(val);
     });
+    // Five Shi Declaration
+    onValue(child(roomRef, 'fiveShiDeclaration'), (snapshot) => {
+      const val = snapshot.val();
+      if (val && callbacks.onFiveShiDeclaration) callbacks.onFiveShiDeclaration(val);
+    });
+
+    // Partner Decision
+    onValue(child(roomRef, 'partnerDecision'), (snapshot) => {
+      const val = snapshot.val();
+      if (val && callbacks.onPartnerDecision) callbacks.onPartnerDecision(val);
+    });
+  }
+
+  async sendFiveShiDeclaration(data) {
+    if (!this.currentRoomId) return;
+    await set(ref(this.db, `games/${this.currentRoomId}/fiveShiDeclaration`), data);
+  }
+
+  async sendPartnerDecision(data) {
+    if (!this.currentRoomId) return;
+    await set(ref(this.db, `games/${this.currentRoomId}/partnerDecision`), data);
   }
 
   // === ラウンド同期 ===

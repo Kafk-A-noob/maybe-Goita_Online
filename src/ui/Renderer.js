@@ -683,6 +683,27 @@ export class Renderer {
     if (modal) modal.style.display = 'none';
   }
 
+  // === 五し関連の手動ダイアログ ===
+
+  showFiveShiDialog(onDeclare, onSilence) {
+    const msg = "手札に「五し」があります。\n宣言しますか？\n（宣言すると相方が配り直しの判断を行います）";
+    if (confirm(msg)) {
+      onDeclare();
+    } else {
+      onSilence();
+    }
+  }
+
+  showPartnerRedealDialog(declarerId, onRedeal, onContinue) {
+    const declarerName = this.playerNames[declarerId] || `プレイヤー${declarerId}`;
+    const msg = `${declarerName} が「五し」を宣言しました。\n配り直しますか？\n（キャンセルを押すとそのまま続行します）`;
+    if (confirm(msg)) {
+      onRedeal();
+    } else {
+      onContinue();
+    }
+  }
+
   async monitorReadyStatus() {
     if (!this.network || !this.network.currentRoomId) return;
 
@@ -720,7 +741,14 @@ export class Renderer {
     if (logEl) {
       logEl.textContent = msg;
       logEl.style.opacity = 1;
-      setTimeout(() => logEl.style.opacity = 0, 3000);
+
+      // Clear previous timeout to keep it visible if updates are frequent
+      if (this.logTimeout) clearTimeout(this.logTimeout);
+
+      // Keep visible for longer (e.g., 10 seconds)
+      this.logTimeout = setTimeout(() => {
+        logEl.style.opacity = 0;
+      }, 10000);
     }
     console.log(msg);
     this.logNetwork(msg); // Also log to network panel
