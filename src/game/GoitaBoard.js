@@ -284,7 +284,6 @@ export class GoitaBoard {
         this.renderer.log(`ID一致: プレイヤー ${index} として参加`);
         this.localPlayerIndex = index;
         p.isHuman = true; // 私は人間
-        this.renderer.playerNames[index] = pData.name + " (あなた)";
       }
     });
 
