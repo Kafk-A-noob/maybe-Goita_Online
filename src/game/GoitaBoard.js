@@ -254,542 +254,560 @@ export class GoitaBoard {
       this.renderer.log(`=== ラウンド ${this.roundCount} 開始 ===`);
       this.nextTurn();
     } else {
+    } else {
       // Network Round Reset
       this.renderer.log("次のラウンドの準備中...");
 
       // Note: Ready flag setting and waiting is done in the button callback (Renderer.js)
       // This nextRound() is only called AFTER all players are ready
 
-      if (this.network.isHost) {
-        // Host: Start New Round
-        this.renderer.log(`=== ラウンド ${this.roundCount} 開始 (ホスト) ===`);
-
-        // Create new deck and deal
-        this.initDeck();
-        this.deal();
-
-        // Serialize Hands for network
-        const handsData = this.players.map(p => p.hand.map(c => ({ type: c.type, id: c.id })));
-
-        // Send New Round State to Guests
-        // Send New Round State to Guests
-        this.network.setInitialState({
-          hands: handsData,
-          turn: this.turnPlayerIndex,
-          round: this.roundCount,
-          players: null // No need to resend player info
-        });
-
-        // Sync Turn UID for new round
-        this.syncTurnToNetwork();
-
-        this.renderer.render(this);
-        this.nextTurn();
+      // Prevent stale round check from blocking
+      if (!this.network.isHost) {
+        // Guest: Do NOT increment roundCount locally. Wait for Network to tell us.
+        // logic: We are currently at Round X. We click Next. Start Waiting.
+        // Network says "Round X+1". We update.
       } else {
-        this.renderer.log("ホストの開始を待っています...");
-
-        // Guest: Wait for new InitialState
-        // The subscription already exists from startNetworkGame
-        // It will automatically handle the new round's InitialState
+        // Host increments immediately to prepare next state
+        this.roundCount++;
       }
-    }
-  }
+
+      try {
+        // 1. Set Ready for the NEXT round (Target = Current + 1)
+        // For Host: (X new) + 1 ?? No. Host is already at X new.
+        // For Guest: (X old) + 1  = X new.
+
+        let targetRound;
+        if (this.network.isHost) {
+          targetRound = this.roundCount; // Host already incremented
+        } else {
+          targetRound = this.roundCount + 1; // Guest still at old round
+        }
+
+        // Just to be safe, let's use a unified logic or rely on the fact that 
+        // we want to match the round number that is ABOUT TO START.
+        // If Round 1 ended. Next is Round 2.
+        // Host: roundCount = 2. Target = 2? 
+        // My previous logic was "Target = roundCount + 1" (which implies 3 for Host?) -> BUG!
+
+        // CORRECTION:
+        // If Round 1 ends. We are preparing for Round 2.
+        // Host increments to 2. Target should be 2.
+        // Guest (at 1) should target 2.
+
+        // Let's force targetRound to be consistent.
+        // It should be the *Coming Round*.
+        // If Host: this.roundCount (already 2).
+        // If Guest: this.roundCount (1) + 1 = 2.
+
+        if (!this.network.isHost) targetRound = this.roundCount + 1;
+        else targetRound = this.roundCount;
+
+        console.log(`Setting Ready for Round ${targetRound}`);
+        await this.network.setReadyForNextRound(targetRound);
+
+        if (this.network.isHost) {
+          this.renderer.log("全員の準備完了を待っています...");
+          // 2. Wait for everyone to be ready for targetRound
+          await this.network.waitForAllPlayersReady(targetRound);
+
+        }
+      }
 
   initDeck() {
-    this.deck = [];
-    let idCounter = 0;
-    for (const [type, count] of Object.entries(INITIAL_DECK_COUNTS)) {
-      for (let i = 0; i < count; i++) {
-        const card = new Card(type, idCounter++);
-        // If King and it's the second one (odd index or just track it), make it Jewel
-        if (type === CARD_TYPES.KING) {
-          // We have 2 Kings. Let's say the one with higher ID is Jewel, or just the second one created.
-          // Since we push sequentially, we can check if we already have a King in deck?
-          // Or simpler: The loop runs twice.
-          if (i === 1) card.isJewel = true;
+        this.deck = [];
+        let idCounter = 0;
+        for (const [type, count] of Object.entries(INITIAL_DECK_COUNTS)) {
+          for (let i = 0; i < count; i++) {
+            const card = new Card(type, idCounter++);
+            // If King and it's the second one (odd index or just track it), make it Jewel
+            if (type === CARD_TYPES.KING) {
+              // We have 2 Kings. Let's say the one with higher ID is Jewel, or just the second one created.
+              // Since we push sequentially, we can check if we already have a King in deck?
+              // Or simpler: The loop runs twice.
+              if (i === 1) card.isJewel = true;
+            }
+            this.deck.push(card);
+          }
         }
-        this.deck.push(card);
+        // Shuffle
+        for (let i = this.deck.length - 1; i > 0; i--) {
+          const j = Math.floor(Math.random() * (i + 1));
+          [this.deck[i], this.deck[j]] = [this.deck[j], this.deck[i]];
+        }
       }
-    }
-    // Shuffle
-    for (let i = this.deck.length - 1; i > 0; i--) {
-      const j = Math.floor(Math.random() * (i + 1));
-      [this.deck[i], this.deck[j]] = [this.deck[j], this.deck[i]];
-    }
-  }
 
-  deal() {
-    const handSize = 8;
-    for (let i = 0; i < 4; i++) {
-      const hand = this.deck.splice(0, handSize);
-      this.players[i].setHand(hand);
-    }
-    this.checkHandConditions();
-  }
+      deal() {
+        const handSize = 8;
+        for (let i = 0; i < 4; i++) {
+          const hand = this.deck.splice(0, handSize);
+          this.players[i].setHand(hand);
+        }
+        this.checkHandConditions();
+      }
 
-  checkHandConditions() {
-    // Only Host checks conditions in Network Game (and syncs result)
-    // Or Single Player checks locally.
-    if (this.isNetworkGame && !this.network.isHost) return;
+      checkHandConditions() {
+        // Only Host checks conditions in Network Game (and syncs result)
+        // Or Single Player checks locally.
+        if (this.isNetworkGame && !this.network.isHost) return;
 
-    let shiCounts = {};
-    let conditions = [];
+        let shiCounts = {};
+        let conditions = [];
 
-    this.players.forEach(p => {
-      const shiCount = p.hand.filter(c => c.type === CARD_TYPES.pawn).length;
-      shiCounts[p.id] = shiCount;
+        this.players.forEach(p => {
+          const shiCount = p.hand.filter(c => c.type === CARD_TYPES.pawn).length;
+          shiCounts[p.id] = shiCount;
 
-      if (shiCount === 8) {
-        conditions.push({ type: '8shi', playerId: p.id, score: 100 });
-      } else if (shiCount === 7) {
-        const other = p.hand.find(c => c.type !== CARD_TYPES.pawn);
-        const score = (SCORES[other.type] || 10) * 2;
-        conditions.push({ type: '7shi', playerId: p.id, score: score });
-      } else if (shiCount === 6) {
-        const others = p.hand.filter(c => c.type !== CARD_TYPES.pawn);
-        let score = 0;
-        if (others[0].type === others[1].type) {
-          score = (SCORES[others[0].type] || 10) * 2;
+          if (shiCount === 8) {
+            conditions.push({ type: '8shi', playerId: p.id, score: 100 });
+          } else if (shiCount === 7) {
+            const other = p.hand.find(c => c.type !== CARD_TYPES.pawn);
+            const score = (SCORES[other.type] || 10) * 2;
+            conditions.push({ type: '7shi', playerId: p.id, score: score });
+          } else if (shiCount === 6) {
+            const others = p.hand.filter(c => c.type !== CARD_TYPES.pawn);
+            let score = 0;
+            if (others[0].type === others[1].type) {
+              score = (SCORES[others[0].type] || 10) * 2;
+            } else {
+              score = Math.max(SCORES[others[0].type] || 0, SCORES[others[1].type] || 0);
+            }
+            conditions.push({ type: '6shi', playerId: p.id, score: score });
+          } else if (shiCount === 5) {
+            conditions.push({ type: '5shi', playerId: p.id });
+          }
+        });
+
+        // Check Team 5 Shi (Player 0&2 or 1&3)
+        if (shiCounts[0] === 5 && shiCounts[2] === 5) {
+          conditions.push({ type: 'team5shi', team: 0, score: 150 });
+        }
+        if (shiCounts[1] === 5 && shiCounts[3] === 5) {
+          conditions.push({ type: 'team5shi', team: 1, score: 150 });
+        }
+
+        // Prioritize: Team 5 Shi > 8 Shi > 7 Shi > 6 Shi > 5 Shi
+        const winCondition = conditions.find(c => ['team5shi', '8shi', '7shi', '6shi'].includes(c.type));
+        if (winCondition) {
+          this.handleSpecialWin(winCondition);
+          return;
+        }
+
+        // Handle 5 Shi cases
+        const fiveShiList = conditions.filter(c => c.type === '5shi');
+        if (fiveShiList.length > 0) {
+          this.handleFiveShiScenarios(fiveShiList);
+        }
+      }
+
+      handleSpecialWin(condition) {
+        this.renderer.log(`特殊勝利条件: ${condition.type}`);
+
+        // Reveal the hand of the player(s) who triggered the special win
+        if (condition.playerId !== undefined) {
+          const player = this.players[condition.playerId];
+          player.revealHand = true; // Mark this player's hand as revealed
+          this.renderer.render(this); // Update UI to show the hand
+        } else if (condition.type === 'team5shi') {
+          // For team 5 shi, reveal both players' hands
+          const team = condition.team;
+          this.players[team].revealHand = true;
+          this.players[team + 2].revealHand = true;
+          this.renderer.render(this);
+        }
+
+        // Delay to let UI render
+        setTimeout(() => {
+          let winnerId = condition.playerId;
+          if (condition.type === 'team5shi') winnerId = condition.team; // Team index
+
+          // Update Score
+          this.teamScores[winnerId % 2] += condition.score;
+          this.renderer.updateScores(this.teamScores);
+
+          // Show Result (pass condition for hand reveal info)
+          this.gameOver = true; // Round Over actually
+          this.renderer.showRoundResult(winnerId, condition.score, this.teamScores.some(s => s >= 150), condition);
+
+          if (this.isNetworkGame) {
+            this.network.sendSpecialWin(condition);
+          }
+        }, 1000);
+      }
+
+      handleFiveShiScenarios(fiveShiList) {
+        const playerIds = fiveShiList.map(c => c.playerId);
+        this.renderer.log(`五し: プレイヤー ${playerIds.join(', ')}`);
+
+        // Check Team 5 Shi (both partners): Already handled above
+        // Check Enemy/Ally 5 Shi (one from each team)
+        const team0Count = playerIds.filter(id => id % 2 === 0).length;
+        const team1Count = playerIds.filter(id => id % 2 === 1).length;
+
+        if (team0Count > 0 && team1Count > 0) {
+          // Enemy/Ally 5 Shi: Both partners must choose redeal
+          this.handleEnemyAllyFiveShi(fiveShiList);
         } else {
-          score = Math.max(SCORES[others[0].type] || 0, SCORES[others[1].type] || 0);
+          // Single 5 Shi: Partner decides
+          this.handleSingleFiveShi(fiveShiList[0]);
         }
-        conditions.push({ type: '6shi', playerId: p.id, score: score });
-      } else if (shiCount === 5) {
-        conditions.push({ type: '5shi', playerId: p.id });
       }
-    });
 
-    // Check Team 5 Shi (Player 0&2 or 1&3)
-    if (shiCounts[0] === 5 && shiCounts[2] === 5) {
-      conditions.push({ type: 'team5shi', team: 0, score: 150 });
-    }
-    if (shiCounts[1] === 5 && shiCounts[3] === 5) {
-      conditions.push({ type: 'team5shi', team: 1, score: 150 });
-    }
+      handleSingleFiveShi(condition) {
+        const playerId = condition.playerId;
+        const partnerId = (playerId + 2) % 4;
+        this.renderer.log(`プレイヤー ${playerId} が「五し」。相方(P${partnerId})が判断します。`);
 
-    // Prioritize: Team 5 Shi > 8 Shi > 7 Shi > 6 Shi > 5 Shi
-    const winCondition = conditions.find(c => ['team5shi', '8shi', '7shi', '6shi'].includes(c.type));
-    if (winCondition) {
-      this.handleSpecialWin(winCondition);
-      return;
-    }
-
-    // Handle 5 Shi cases
-    const fiveShiList = conditions.filter(c => c.type === '5shi');
-    if (fiveShiList.length > 0) {
-      this.handleFiveShiScenarios(fiveShiList);
-    }
-  }
-
-  handleSpecialWin(condition) {
-    this.renderer.log(`特殊勝利条件: ${condition.type}`);
-
-    // Reveal the hand of the player(s) who triggered the special win
-    if (condition.playerId !== undefined) {
-      const player = this.players[condition.playerId];
-      player.revealHand = true; // Mark this player's hand as revealed
-      this.renderer.render(this); // Update UI to show the hand
-    } else if (condition.type === 'team5shi') {
-      // For team 5 shi, reveal both players' hands
-      const team = condition.team;
-      this.players[team].revealHand = true;
-      this.players[team + 2].revealHand = true;
-      this.renderer.render(this);
-    }
-
-    // Delay to let UI render
-    setTimeout(() => {
-      let winnerId = condition.playerId;
-      if (condition.type === 'team5shi') winnerId = condition.team; // Team index
-
-      // Update Score
-      this.teamScores[winnerId % 2] += condition.score;
-      this.renderer.updateScores(this.teamScores);
-
-      // Show Result (pass condition for hand reveal info)
-      this.gameOver = true; // Round Over actually
-      this.renderer.showRoundResult(winnerId, condition.score, this.teamScores.some(s => s >= 150), condition);
-
-      if (this.isNetworkGame) {
-        this.network.sendSpecialWin(condition);
-      }
-    }, 1000);
-  }
-
-  handleFiveShiScenarios(fiveShiList) {
-    const playerIds = fiveShiList.map(c => c.playerId);
-    this.renderer.log(`五し: プレイヤー ${playerIds.join(', ')}`);
-
-    // Check Team 5 Shi (both partners): Already handled above
-    // Check Enemy/Ally 5 Shi (one from each team)
-    const team0Count = playerIds.filter(id => id % 2 === 0).length;
-    const team1Count = playerIds.filter(id => id % 2 === 1).length;
-
-    if (team0Count > 0 && team1Count > 0) {
-      // Enemy/Ally 5 Shi: Both partners must choose redeal
-      this.handleEnemyAllyFiveShi(fiveShiList);
-    } else {
-      // Single 5 Shi: Partner decides
-      this.handleSingleFiveShi(fiveShiList[0]);
-    }
-  }
-
-  handleSingleFiveShi(condition) {
-    const playerId = condition.playerId;
-    const partnerId = (playerId + 2) % 4;
-    this.renderer.log(`プレイヤー ${playerId} が「五し」。相方(P${partnerId})が判断します。`);
-
-    if (!this.isNetworkGame) {
-      // In Single Player: Ask the partner
-      if (partnerId === 0) {
-        // Human partner
-        this.renderer.showFiveShiDialog(
-          () => this.redeal(),
-          () => this.renderer.log("続行します。")
-        );
-      } else {
-        // CPU partner: Auto decide (for now, auto redeal)
-        this.renderer.log(`CPU (P${partnerId}) が配り直しを選択しました。`);
-        setTimeout(() => this.redeal(), 1000);
-      }
-    } else {
-      // Network: Send Event with partnerId
-      this.network.sendFiveShiEvent({ ...condition, partnerId });
-    }
-  }
-
-  handleEnemyAllyFiveShi(fiveShiList) {
-    this.renderer.log("敵・味方それぞれ一人が「五し」です。両相方が配り直しを選択した場合のみ配り直します。");
-
-    // Store pending decisions
-    this.pendingFiveShiDecisions = {
-      players: fiveShiList.map(c => c.playerId),
-      decisions: {} // partnerId -> true/false
-    };
-
-    // Ask each partner
-    fiveShiList.forEach(condition => {
-      const playerId = condition.playerId;
-      const partnerId = (playerId + 2) % 4;
-
-      if (!this.isNetworkGame) {
-        if (partnerId === 0) {
-          // Human partner
-          this.renderer.showFiveShiDialog(
-            () => this.recordFiveShiDecision(partnerId, true),
-            () => this.recordFiveShiDecision(partnerId, false)
-          );
+        if (!this.isNetworkGame) {
+          // In Single Player: Ask the partner
+          if (partnerId === 0) {
+            // Human partner
+            this.renderer.showFiveShiDialog(
+              () => this.redeal(),
+              () => this.renderer.log("続行します。")
+            );
+          } else {
+            // CPU partner: Auto decide (for now, auto redeal)
+            this.renderer.log(`CPU (P${partnerId}) が配り直しを選択しました。`);
+            setTimeout(() => this.redeal(), 1000);
+          }
         } else {
-          // CPU partner: Auto decide
-          setTimeout(() => this.recordFiveShiDecision(partnerId, true), 1000);
+          // Network: Send Event with partnerId
+          this.network.sendFiveShiEvent({ ...condition, partnerId });
         }
-      } else {
-        // Network: Send Event
-        this.network.sendFiveShiEvent({ ...condition, partnerId, isEnemyAllyScenario: true });
       }
-    });
-  }
 
-  recordFiveShiDecision(partnerId, wantsRedeal) {
-    if (!this.pendingFiveShiDecisions) return;
+      handleEnemyAllyFiveShi(fiveShiList) {
+        this.renderer.log("敵・味方それぞれ一人が「五し」です。両相方が配り直しを選択した場合のみ配り直します。");
 
-    this.pendingFiveShiDecisions.decisions[partnerId] = wantsRedeal;
-    this.renderer.log(`P${partnerId} が ${wantsRedeal ? '配り直し' : '続行'} を選択。`);
+        // Store pending decisions
+        this.pendingFiveShiDecisions = {
+          players: fiveShiList.map(c => c.playerId),
+          decisions: {} // partnerId -> true/false
+        };
 
-    // Check if all decisions are in
-    const allDecided = this.pendingFiveShiDecisions.players.every(pId => {
-      const partnerId = (pId + 2) % 4;
-      return this.pendingFiveShiDecisions.decisions[partnerId] !== undefined;
-    });
+        // Ask each partner
+        fiveShiList.forEach(condition => {
+          const playerId = condition.playerId;
+          const partnerId = (playerId + 2) % 4;
 
-    if (allDecided) {
-      // Both partners must choose redeal
-      const allRedeal = Object.values(this.pendingFiveShiDecisions.decisions).every(d => d === true);
-      this.pendingFiveShiDecisions = null;
+          if (!this.isNetworkGame) {
+            if (partnerId === 0) {
+              // Human partner
+              this.renderer.showFiveShiDialog(
+                () => this.recordFiveShiDecision(partnerId, true),
+                () => this.recordFiveShiDecision(partnerId, false)
+              );
+            } else {
+              // CPU partner: Auto decide
+              setTimeout(() => this.recordFiveShiDecision(partnerId, true), 1000);
+            }
+          } else {
+            // Network: Send Event
+            this.network.sendFiveShiEvent({ ...condition, partnerId, isEnemyAllyScenario: true });
+          }
+        });
+      }
 
-      if (allRedeal) {
-        this.renderer.log("両相方が配り直しを選択しました。配り直します。");
-        setTimeout(() => this.redeal(), 1000);
-      } else {
-        this.renderer.log("片方が続行を選択しました。ゲームを続行します。");
+      recordFiveShiDecision(partnerId, wantsRedeal) {
+        if (!this.pendingFiveShiDecisions) return;
+
+        this.pendingFiveShiDecisions.decisions[partnerId] = wantsRedeal;
+        this.renderer.log(`P${partnerId} が ${wantsRedeal ? '配り直し' : '続行'} を選択。`);
+
+        // Check if all decisions are in
+        const allDecided = this.pendingFiveShiDecisions.players.every(pId => {
+          const partnerId = (pId + 2) % 4;
+          return this.pendingFiveShiDecisions.decisions[partnerId] !== undefined;
+        });
+
+        if (allDecided) {
+          // Both partners must choose redeal
+          const allRedeal = Object.values(this.pendingFiveShiDecisions.decisions).every(d => d === true);
+          this.pendingFiveShiDecisions = null;
+
+          if (allRedeal) {
+            this.renderer.log("両相方が配り直しを選択しました。配り直します。");
+            setTimeout(() => this.redeal(), 1000);
+          } else {
+            this.renderer.log("片方が続行を選択しました。ゲームを続行します。");
+            this.nextTurn();
+          }
+        }
+      }
+
+      redeal() {
+        this.renderer.log("配り直し...");
+        this.renderer.clearField();
+        this.initDeck();
+        this.deal();
+        this.renderer.render(this);
         this.nextTurn();
       }
-    }
-  }
-
-  redeal() {
-    this.renderer.log("配り直し...");
-    this.renderer.clearField();
-    this.initDeck();
-    this.deal();
-    this.renderer.render(this);
-    this.nextTurn();
-  }
 
   async nextTurn() {
-    if (this.gameOver) return;
+        if (this.gameOver) return;
 
-    const player = this.players[this.turnPlayerIndex];
-    this.renderer.highlightPlayer(this.turnPlayerIndex);
+        const player = this.players[this.turnPlayerIndex];
+        this.renderer.highlightPlayer(this.turnPlayerIndex);
 
-    // Network Logic
-    if (this.isNetworkGame) {
-      const amIHost = this.network.isHost;
-      const isMyTurn = (this.turnPlayerIndex === this.localPlayerIndex);
+        // Network Logic
+        if (this.isNetworkGame) {
+          const amIHost = this.network.isHost;
+          const isMyTurn = (this.turnPlayerIndex === this.localPlayerIndex);
 
-      // Check if current player is NPC (controlled by Host)
-      // We rely on isHuman flag set in setupPlayersFromNetwork
-      // Note: In Network Mode, isHuman means "Real Human".
-      // So !isHuman means NPC.
+          // Check if current player is NPC (controlled by Host)
+          // We rely on isHuman flag set in setupPlayersFromNetwork
+          // Note: In Network Mode, isHuman means "Real Human".
+          // So !isHuman means NPC.
 
-      const isNpc = !player.isHuman;
+          const isNpc = !player.isHuman;
 
-      if (amIHost && isNpc) {
-        // Host controls NPC -> Proceed to AI logic
-      } else if (!isMyTurn) {
-        return; // Wait for remote
-      }
-    }
-
-    // Get action (Human input or AI)
-    const action = await player.decideAction({
-      currentAttack: this.currentAttack,
-      history: []
-    });
-
-    if (!action && player.isHuman) {
-      this.renderer.enableControls(true, this.currentAttack);
-      return;
-    }
-
-    if (action) {
-      this.processAction(player, action);
-    }
-  }
-
-  // Human Input Handler called by Renderer
-  async handleHumanAction(action) {
-    const player = this.players[this.turnPlayerIndex]; // Should be me
-    // Validation
-    if (this.isNetworkGame && this.turnPlayerIndex !== this.localPlayerIndex) return;
-
-    const result = await this.processAction(player, action);
-    if (!result.valid) {
-      alert(result.reason);
-      return; // Retry
-    }
-    this.renderer.enableControls(false);
-  }
-
-  async processAction(player, action) {
-    // 1. Validate & Execute Locally
-    const result = await this.executeActionLogic(player, action);
-
-    if (this.isNetworkGame) {
-      // 2. Send to Network
-      const cleanAction = { ...action, playerIndex: player.id };
-      if (cleanAction.card1) cleanAction.card1 = { type: cleanAction.card1.type, id: cleanAction.card1.id, isJewel: cleanAction.card1.isJewel };
-      if (cleanAction.card2) cleanAction.card2 = { type: cleanAction.card2.type, id: cleanAction.card2.id, isJewel: cleanAction.card2.isJewel };
-
-      this.renderer.logNetwork(`Sending Action: P${player.id} ${action.action}`);
-      await this.network.sendGameAction(cleanAction);
-
-      // 3. Sync Turn if Changed
-      // If I played, I am responsible for passing the turn (updating the 'turn' UID)
-      // Note: executeActionLogic updated 'this.turnPlayerIndex' already.
-      // logic: I had write permission (my turn), I wrote action. Now I write turn update.
-      await this.syncTurnToNetwork();
-    }
-
-    // Resume Turn Loop (After Action + Network Sync)
-    this.nextTurn();
-
-    return result;
-  }
-
-  async handleRemoteAction(remoteAction) {
-    this.renderer.logNetwork(`Received Action: P${remoteAction.playerIndex} ${remoteAction.action}`);
-    // console.log("Received Remote Action:", remoteAction);
-
-    if (remoteAction.playerIndex === this.localPlayerIndex) {
-      this.renderer.logNetwork(`IGNORED (Self Index: ${this.localPlayerIndex})`);
-      return;
-    }
-    if (remoteAction.playerId === this.network.playerId) {
-      this.renderer.logNetwork(`IGNORED (Self ID)`);
-      return;
-    }
-
-    const player = this.players[remoteAction.playerIndex];
-
-    // Reconstruct Cards
-    // Reconstruct Cards
-    if (remoteAction.card1) {
-      const c = new Card(remoteAction.card1.type, remoteAction.card1.id);
-      c.isJewel = remoteAction.card1.isJewel;
-      remoteAction.card1 = c;
-    }
-    if (remoteAction.card2) {
-      const c = new Card(remoteAction.card2.type, remoteAction.card2.id);
-      c.isJewel = remoteAction.card2.isJewel;
-      remoteAction.card2 = c;
-    }
-
-    this.renderer.log(`Remote Action from P${player.id}`);
-    await this.executeActionLogic(player, remoteAction);
-
-    // Resume Turn Loop (After Remote Action)
-    this.nextTurn();
-  }
-
-  // Separated Logic for reuse
-  async executeActionLogic(player, action) {
-    if (action.action === 'pass') {
-      if (!this.currentAttack) {
-        return { valid: false, reason: "攻めの手番ではパスできません" };
-      }
-      this.passCount++;
-      this.renderer.log(`プレイヤー ${player.id}: なし`);
-
-      if (this.passCount >= 3) {
-        const winnerIndex = this.currentAttack.playerIndex;
-        this.finishTrick(winnerIndex);
-        // trick finished, turnPlayerIndex updated inside finishTrick
-      } else {
-        this.turnPlayerIndex = (this.turnPlayerIndex + 1) % 4;
-        // nextTurn() removed - called by caller
-      }
-      return { valid: true };
-    }
-
-    if (action.action === 'playTurn') {
-      const { card1, card2 } = action;
-      if (!card1 || !card2) return { valid: false, reason: "カードを2枚選んでください" };
-
-      // === KING RULE CHECK ===
-      // If attacking with King, must have at least 2 Kings in hand (including the ones being played)
-      if (card2.type === CARD_TYPES.KING) {
-        const kingInHand = player.hand.filter(c => c.type === CARD_TYPES.KING).length;
-        // Logic: King in hand (which includes the ones we are about to play) + Visible Kings on board must be >= 2
-        // Note: card1 and card2 are still in 'hand' at this point.
-        if ((kingInHand + this.visibleKingCount) < 2) {
-          return { valid: false, reason: "王(玉)で攻めるには、もう一枚の王(玉)が必要です (手札または場)" };
-        }
-      }
-
-      // Check validity based on State
-      if (!this.currentAttack) {
-        // === LEAD ===
-        player.removeCard(card1);
-        player.removeCard(card2);
-
-        const cardName = card2.isJewel ? "玉" : card2.type;
-        this.renderer.log(`プレイヤー ${player.id} 攻め: [伏せ] -> ${cardName}`);
-        this.renderer.showPlay(player.id, card1, card2, true);
-
-        if (card2.type === CARD_TYPES.KING) this.visibleKingCount++;
-
-        this.currentAttack = { playerIndex: player.id, card: card2 };
-        this.passCount = 0;
-
-        this.renderer.render(this);
-
-        const isDouble = (card1.type === card2.type);
-        if (isDouble) {
-          this.renderer.revealLastLead(player.id, card1);
-        }
-
-        const roundEnded = await this.checkWin(player, isDouble);
-
-        if (!this.gameOver && !roundEnded) {
-          this.turnPlayerIndex = (this.turnPlayerIndex + 1) % 4;
-          // nextTurn() removed - called by caller
-        }
-        return { valid: true };
-
-      } else {
-        // === COUNTER ===
-        const attackType = this.currentAttack.card.type;
-        const defType = card1.type;
-
-        let validDef = (attackType === defType);
-        // King Rule
-        if (!validDef && defType === CARD_TYPES.KING) {
-          if (attackType !== CARD_TYPES.pawn && attackType !== CARD_TYPES.lance) {
-            validDef = true;
+          if (amIHost && isNpc) {
+            // Host controls NPC -> Proceed to AI logic
+          } else if (!isMyTurn) {
+            return; // Wait for remote
           }
         }
 
-        if (!validDef) return { valid: false, reason: "そのカードでは受けられません" };
+        // Get action (Human input or AI)
+        const action = await player.decideAction({
+          currentAttack: this.currentAttack,
+          history: []
+        });
 
-        player.removeCard(card1);
-        player.removeCard(card2);
-
-        const c1Name = card1.isJewel ? "玉" : card1.type;
-        const c2Name = card2.isJewel ? "玉" : card2.type;
-        this.renderer.log(`プレイヤー ${player.id} 受け・攻め: ${c1Name} -> ${c2Name}`);
-        this.renderer.showPlay(player.id, card1, card2, false);
-
-        if (card1.type === CARD_TYPES.KING) this.visibleKingCount++;
-        if (card2.type === CARD_TYPES.KING) this.visibleKingCount++;
-
-        this.currentAttack = { playerIndex: player.id, card: card2 };
-        this.passCount = 0;
-
-        this.renderer.render(this);
-
-        const isDouble = (card1.type === card2.type);
-
-        // Reveal the receive card if it's a double
-        if (isDouble) {
-          // For counter, card1 is already visible (not hidden), but we highlight it
-          this.renderer.revealLastReceive(player.id, card1);
+        if (!action && player.isHuman) {
+          this.renderer.enableControls(true, this.currentAttack);
+          return;
         }
 
-        const roundEnded = await this.checkWin(player, isDouble);
-
-        if (!this.gameOver && !roundEnded) {
-          this.turnPlayerIndex = (this.turnPlayerIndex + 1) % 4;
-          // nextTurn() removed - called by caller
+        if (action) {
+          this.processAction(player, action);
         }
-        return { valid: true };
       }
-    }
-  }
 
-  finishTrick(winnerIndex) {
-    this.currentAttack = null;
-    this.passCount = 0;
-    this.turnPlayerIndex = winnerIndex;
-    this.renderer.render(this);
-    // nextTurn() removed - called by caller
-  }
+  // Human Input Handler called by Renderer
+  async handleHumanAction(action) {
+        const player = this.players[this.turnPlayerIndex]; // Should be me
+        // Validation
+        if (this.isNetworkGame && this.turnPlayerIndex !== this.localPlayerIndex) return;
+
+        const result = await this.processAction(player, action);
+        if (!result.valid) {
+          alert(result.reason);
+          return; // Retry
+        }
+        this.renderer.enableControls(false);
+      }
+
+  async processAction(player, action) {
+        // 1. Validate & Execute Locally
+        const result = await this.executeActionLogic(player, action);
+
+        if (this.isNetworkGame) {
+          // 2. Send to Network
+          const cleanAction = { ...action, playerIndex: player.id };
+          if (cleanAction.card1) cleanAction.card1 = { type: cleanAction.card1.type, id: cleanAction.card1.id, isJewel: cleanAction.card1.isJewel };
+          if (cleanAction.card2) cleanAction.card2 = { type: cleanAction.card2.type, id: cleanAction.card2.id, isJewel: cleanAction.card2.isJewel };
+
+          this.renderer.logNetwork(`Sending Action: P${player.id} ${action.action}`);
+          await this.network.sendGameAction(cleanAction);
+
+          // 3. Sync Turn if Changed
+          // If I played, I am responsible for passing the turn (updating the 'turn' UID)
+          // Note: executeActionLogic updated 'this.turnPlayerIndex' already.
+          // logic: I had write permission (my turn), I wrote action. Now I write turn update.
+          await this.syncTurnToNetwork();
+        }
+
+        // Resume Turn Loop (After Action + Network Sync)
+        this.nextTurn();
+
+        return result;
+      }
+
+  async handleRemoteAction(remoteAction) {
+        this.renderer.logNetwork(`Received Action: P${remoteAction.playerIndex} ${remoteAction.action}`);
+        // console.log("Received Remote Action:", remoteAction);
+
+        if (remoteAction.playerIndex === this.localPlayerIndex) {
+          this.renderer.logNetwork(`IGNORED (Self Index: ${this.localPlayerIndex})`);
+          return;
+        }
+        if (remoteAction.playerId === this.network.playerId) {
+          this.renderer.logNetwork(`IGNORED (Self ID)`);
+          return;
+        }
+
+        const player = this.players[remoteAction.playerIndex];
+
+        // Reconstruct Cards
+        // Reconstruct Cards
+        if (remoteAction.card1) {
+          const c = new Card(remoteAction.card1.type, remoteAction.card1.id);
+          c.isJewel = remoteAction.card1.isJewel;
+          remoteAction.card1 = c;
+        }
+        if (remoteAction.card2) {
+          const c = new Card(remoteAction.card2.type, remoteAction.card2.id);
+          c.isJewel = remoteAction.card2.isJewel;
+          remoteAction.card2 = c;
+        }
+
+        this.renderer.log(`Remote Action from P${player.id}`);
+        await this.executeActionLogic(player, remoteAction);
+
+        // Resume Turn Loop (After Remote Action)
+        this.nextTurn();
+      }
+
+  // Separated Logic for reuse
+  async executeActionLogic(player, action) {
+        if (action.action === 'pass') {
+          if (!this.currentAttack) {
+            return { valid: false, reason: "攻めの手番ではパスできません" };
+          }
+          this.passCount++;
+          this.renderer.log(`プレイヤー ${player.id}: なし`);
+
+          if (this.passCount >= 3) {
+            const winnerIndex = this.currentAttack.playerIndex;
+            this.finishTrick(winnerIndex);
+            // trick finished, turnPlayerIndex updated inside finishTrick
+          } else {
+            this.turnPlayerIndex = (this.turnPlayerIndex + 1) % 4;
+            // nextTurn() removed - called by caller
+          }
+          return { valid: true };
+        }
+
+        if (action.action === 'playTurn') {
+          const { card1, card2 } = action;
+          if (!card1 || !card2) return { valid: false, reason: "カードを2枚選んでください" };
+
+          // === KING RULE CHECK ===
+          // If attacking with King, must have at least 2 Kings in hand (including the ones being played)
+          if (card2.type === CARD_TYPES.KING) {
+            const kingInHand = player.hand.filter(c => c.type === CARD_TYPES.KING).length;
+            // Logic: King in hand (which includes the ones we are about to play) + Visible Kings on board must be >= 2
+            // Note: card1 and card2 are still in 'hand' at this point.
+            if ((kingInHand + this.visibleKingCount) < 2) {
+              return { valid: false, reason: "王(玉)で攻めるには、もう一枚の王(玉)が必要です (手札または場)" };
+            }
+          }
+
+          // Check validity based on State
+          if (!this.currentAttack) {
+            // === LEAD ===
+            player.removeCard(card1);
+            player.removeCard(card2);
+
+            const cardName = card2.isJewel ? "玉" : card2.type;
+            this.renderer.log(`プレイヤー ${player.id} 攻め: [伏せ] -> ${cardName}`);
+            this.renderer.showPlay(player.id, card1, card2, true);
+
+            if (card2.type === CARD_TYPES.KING) this.visibleKingCount++;
+
+            this.currentAttack = { playerIndex: player.id, card: card2 };
+            this.passCount = 0;
+
+            this.renderer.render(this);
+
+            const isDouble = (card1.type === card2.type);
+            if (isDouble) {
+              this.renderer.revealLastLead(player.id, card1);
+            }
+
+            const roundEnded = await this.checkWin(player, isDouble);
+
+            if (!this.gameOver && !roundEnded) {
+              this.turnPlayerIndex = (this.turnPlayerIndex + 1) % 4;
+              // nextTurn() removed - called by caller
+            }
+            return { valid: true };
+
+          } else {
+            // === COUNTER ===
+            const attackType = this.currentAttack.card.type;
+            const defType = card1.type;
+
+            let validDef = (attackType === defType);
+            // King Rule
+            if (!validDef && defType === CARD_TYPES.KING) {
+              if (attackType !== CARD_TYPES.pawn && attackType !== CARD_TYPES.lance) {
+                validDef = true;
+              }
+            }
+
+            if (!validDef) return { valid: false, reason: "そのカードでは受けられません" };
+
+            player.removeCard(card1);
+            player.removeCard(card2);
+
+            const c1Name = card1.isJewel ? "玉" : card1.type;
+            const c2Name = card2.isJewel ? "玉" : card2.type;
+            this.renderer.log(`プレイヤー ${player.id} 受け・攻め: ${c1Name} -> ${c2Name}`);
+            this.renderer.showPlay(player.id, card1, card2, false);
+
+            if (card1.type === CARD_TYPES.KING) this.visibleKingCount++;
+            if (card2.type === CARD_TYPES.KING) this.visibleKingCount++;
+
+            this.currentAttack = { playerIndex: player.id, card: card2 };
+            this.passCount = 0;
+
+            this.renderer.render(this);
+
+            const isDouble = (card1.type === card2.type);
+
+            // Reveal the receive card if it's a double
+            if (isDouble) {
+              // For counter, card1 is already visible (not hidden), but we highlight it
+              this.renderer.revealLastReceive(player.id, card1);
+            }
+
+            const roundEnded = await this.checkWin(player, isDouble);
+
+            if (!this.gameOver && !roundEnded) {
+              this.turnPlayerIndex = (this.turnPlayerIndex + 1) % 4;
+              // nextTurn() removed - called by caller
+            }
+            return { valid: true };
+          }
+        }
+      }
+
+      finishTrick(winnerIndex) {
+        this.currentAttack = null;
+        this.passCount = 0;
+        this.turnPlayerIndex = winnerIndex;
+        this.renderer.render(this);
+        // nextTurn() removed - called by caller
+      }
 
   async checkWin(player, isDouble = false) {
-    if (player.hand.length === 0) {
-      let score = 30;
-      if (this.currentAttack && this.currentAttack.playerIndex === player.id) {
-        const SCORES = { '王': 50, '飛': 40, '角': 40, '金': 30, '銀': 30, '馬': 20, '香': 20, 'し': 10 };
-        score = SCORES[this.currentAttack.card.type] || 30;
-      }
+        if (player.hand.length === 0) {
+          let score = 30;
+          if (this.currentAttack && this.currentAttack.playerIndex === player.id) {
+            const SCORES = { '王': 50, '飛': 40, '角': 40, '金': 30, '銀': 30, '馬': 20, '香': 20, 'し': 10 };
+            score = SCORES[this.currentAttack.card.type] || 30;
+          }
 
-      if (isDouble) {
-        score *= 2;
-        this.renderer.log(`ダブル得点！ (同種受け攻め)`);
-      }
+          if (isDouble) {
+            score *= 2;
+            this.renderer.log(`ダブル得点！ (同種受け攻め)`);
+          }
 
-      this.teamScores[player.id % 2] += score;
-      this.renderer.updateScores(this.teamScores);
-      this.renderer.log(`ラウンド終了！ 勝者: プレイヤー ${player.id} (+${score})`);
+          this.teamScores[player.id % 2] += score;
+          this.renderer.updateScores(this.teamScores);
+          this.renderer.log(`ラウンド終了！ 勝者: プレイヤー ${player.id} (+${score})`);
 
-      if (this.teamScores.some(s => s >= 150)) {
-        this.gameOver = true;
-        this.renderer.showRoundResult(player.id, score, true);
-      } else {
-        this.renderer.showRoundResult(player.id, score, false);
+          if (this.teamScores.some(s => s >= 150)) {
+            this.gameOver = true;
+            this.renderer.showRoundResult(player.id, score, true);
+          } else {
+            this.renderer.showRoundResult(player.id, score, false);
+          }
+          return true; // Round Ended
+        }
+        return false; // Round continues
       }
-      return true; // Round Ended
     }
-    return false; // Round continues
-  }
-}
