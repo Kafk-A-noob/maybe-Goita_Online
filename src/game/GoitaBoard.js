@@ -247,21 +247,16 @@ export class GoitaBoard {
     this.gameOver = false;
     this.players.forEach(p => p.revealHand = false);
     this.renderer.clearField();
+    this.renderer.closeResultModal(); // Ensure modal is closed
     this.renderer.log("ラウンド状態をリセットしました");
   }
 
   async nextRound(winnerId) {
     this.roundCount++;
-    this.gameOver = false;
     this.turnPlayerIndex = winnerId;
-    this.currentAttack = null;
-    this.passCount = 0;
-    this.visibleKingCount = 0;
 
-    // 全プレイヤーの手札公開フラグをリセット
-    this.players.forEach(p => p.revealHand = false);
-
-    this.renderer.clearField();
+    // 状態のリセット (ホスト・シングル共通)
+    this.resetLocalRoundState();
 
     if (!this.isNetworkGame) {
       this.initDeck();
