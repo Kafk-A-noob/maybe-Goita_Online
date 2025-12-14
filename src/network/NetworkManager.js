@@ -166,7 +166,8 @@ export class NetworkManager {
         id: this.playerId,
         index: myIndex,
         isHost: false,
-        isReady: true
+        isReady: true,
+        isCpu: false // Explicitly mark as Human
       };
 
       await update(ref(this.db, `games/${code}/players/${this.playerId}`), newPlayer);
@@ -373,7 +374,15 @@ export class NetworkManager {
 
       unsubscribe = onValue(playersRef, (snapshot) => {
         const players = snapshot.val() || {};
-        const allReady = Object.values(players).every(p => {
+        const playerList = Object.values(players);
+
+        // 4人揃っているか確認 (または少なくともホスト以外がいるか)
+        if (playerList.length < 4) {
+          // console.log("Waiting for full lobby...");
+          return;
+        }
+
+        const allReady = playerList.every(p => {
           if (p.isCpu) return true;
           // 特定のターゲットラウンド以上で準備完了か確認
           return (p.readyForRound && p.readyForRound >= targetRound);

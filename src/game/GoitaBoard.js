@@ -129,6 +129,9 @@ export class GoitaBoard {
           // ローカルのラウンド数を同期
           this.roundCount = state.round;
 
+          // モーダルを閉じる (ゲスト側でラウンド開始時に自動で閉じる)
+          this.renderer.closeResultModal();
+
           // ホストの状態からプレイヤーを設定（初回のみ必要）
           if (state.players) {
             this.setupPlayersFromNetwork(state.players);

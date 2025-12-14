@@ -678,6 +678,11 @@ export class Renderer {
     modal.style.display = 'block';
   }
 
+  closeResultModal() {
+    const modal = document.getElementById('result-modal');
+    if (modal) modal.style.display = 'none';
+  }
+
   async monitorReadyStatus() {
     if (!this.network || !this.network.currentRoomId) return;
 
