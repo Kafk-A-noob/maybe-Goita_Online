@@ -728,7 +728,10 @@ export class Renderer {
       line.textContent = `[${new Date().toLocaleTimeString()}] ${msg}`;
       line.style.borderBottom = "1px solid #333";
       el.appendChild(line);
-      el.scrollTop = el.scrollHeight;
+      // DOM更新後にスクロールさせるためにsetTimeoutを使用
+      setTimeout(() => {
+        el.scrollTop = el.scrollHeight;
+      }, 0);
     }
     console.log("[NET]", msg);
   }

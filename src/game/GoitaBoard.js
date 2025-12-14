@@ -5,8 +5,8 @@ import { Player } from './Player.js';
 export class GoitaBoard {
   constructor(renderer) {
     this.renderer = renderer;
-    this.network = renderer.network; // Access NetworkManager
-    this.players = PLAYERS.map(id => new Player(id, id === 0)); // Default: Player 0 is Human
+    this.network = renderer.network; // NetworkManagerへのアクセス
+    this.players = PLAYERS.map(id => new Player(id, id === 0)); // デフォルト: プレイヤー0が人間
     this.deck = [];
     this.turnPlayerIndex = 0;
     this.currentAttack = null;
@@ -17,28 +17,27 @@ export class GoitaBoard {
     this.visibleKingCount = 0;
 
     this.isNetworkGame = false;
-    this.localPlayerIndex = -1; // Default -1 (Invalid) until identified
+    this.localPlayerIndex = -1; // デフォルト-1 (未特定)
     this.isSubscribedToActions = false;
-    this.initialStateSubscribed = false; // Track if we already subscribed to InitialState
+    this.initialStateSubscribed = false; // 既に初期状態にサブスクライブしているか追跡
 
-    // Network Callbacks
+    // ネットワークコールバック
     if (this.network) {
       this.network.onGameStart = () => this.startNetworkGame();
-      // Listen for actions - MOVED to startNetworkGame
+      // アクションの監視は startNetworkGame に移動
     }
   }
 
-  // Helper to sync turn UID to Firebase (Critical for Write Permissions)
+  // 手番（turn）の書き込み権限を持つUIDをFirebaseに同期するヘルパー
   async syncTurnToNetwork() {
     if (!this.isNetworkGame || !this.network.currentRoomId) return;
 
-    // Find UID of the NEW turn player
+    // 新しい手番プレイヤーの UID を取得
     const p = this.players[this.turnPlayerIndex];
-    // If Human, use their ID. If CPU, use Host ID (because Host plays/writes for CPU).
-    // If Human, use their stored Firebase UID. If CPU, use Host ID.
+    // 人間の場合はそのID（.uid）を使用。CPUの場合はホストIDを使用
     let targetUid = p.uid;
     if (!p.isHuman) {
-      // CPU: The Host controls them, so Host needs write permission.
+      // CPU: ホストが制御するため、ホストに書き込み権限を与える
       targetUid = this.network.hostId;
     }
 
@@ -48,7 +47,7 @@ export class GoitaBoard {
   }
 
 
-  // === Single Player Start ===
+  // === シングルプレイ開始 ===
   start() {
     this.isNetworkGame = false;
     this.initDeck();
@@ -58,17 +57,17 @@ export class GoitaBoard {
     this.nextTurn();
   }
 
-  // === Network Game Start ===
+  // === ネットワークゲーム開始 ===
   async startNetworkGame() {
-    this.isNetworkGame = true; // Set network flag
+    this.isNetworkGame = true; // ネットワークフラグを設定
     const { get, ref } = await import("firebase/database");
     const snapshot = await get(ref(this.network.db, `games/${this.network.currentRoomId}`));
     const roomData = snapshot.val();
 
-    // Setup Game UI first
+    // ゲームUIの初期化
     this.renderer.setupGameUI();
 
-    // === RECONNECTION LOGIC ===
+    // === 再接続ロジック ===
     if (roomData.status === 'playing') {
       this.renderer.log("進行中のゲームに再接続しています...");
       const gameState = await this.network.getGameState();
@@ -80,62 +79,62 @@ export class GoitaBoard {
       }
     }
 
-    // === NEW GAME LOGIC ===
+    // === 新規ゲームロジック ===
     if (this.network.isHost) {
       const playersData = roomData.players;
 
-      // Setup Local Players
+      // ローカルプレイヤーの設定
       this.setupPlayersFromNetwork(playersData);
 
       this.initDeck();
       this.deal();
 
-      // Serialize Hands
+      // 手札のシリアライズ
       const handsData = this.players.map(p => p.hand.map(c => ({ type: c.type, id: c.id })));
 
-      // Send Initial State
+      // 初期状態の送信
       this.network.setInitialState({
         hands: handsData,
         turn: 0,
         round: this.roundCount,
-        players: playersData // Send player info to guests
+        players: playersData // プレイヤー情報をゲストに送信
       });
 
       this.renderer.log(`=== ラウンド ${this.roundCount} 開始 (マルチ:ホスト) ===`);
-      this.renderer.render(this); // Update UI for Host
+      this.renderer.render(this); // ホストのUI更新
 
-      // Subscribe to game actions (for remote players and guests)
+      // ゲームアクションの監視開始（リモートプレイヤーとゲスト用）
       if (!this.isSubscribedToActions) {
         this.network.subscribeToGameActions((action) => this.handleRemoteAction(action));
         this.isSubscribedToActions = true;
       }
 
-      // Initial Turn Sync (Host Logic)
+      // 初回の手番同期（ホストロジック）
       this.syncTurnToNetwork();
       this.nextTurn();
     } else {
       this.renderer.log(`=== ラウンド ${this.roundCount} 開始 (マルチ:ゲスト) ===`);
       this.renderer.log(`ホストの準備を待っています...`);
 
-      // Wait for Initial State (ONLY ONCE - Reused for all rounds)
+      // 初期状態を待機（一度だけ - 全ラウンドで再利用）
       if (!this.initialStateSubscribed) {
         this.network.subscribeToInitialState((state) => {
-          // This callback will fire for EVERY round (round 1, 2, 3...)
+          // このコールバックは毎ラウンド発火する
           if (state.round < this.roundCount) {
-            // Ignore old state
+            // 古い状態なら無視
             console.log(`Ignoring old round state: ${state.round} (Current: ${this.roundCount})`);
             return;
           }
 
-          // Update local round count to match network (Sync up)
+          // ローカルのラウンド数を同期
           this.roundCount = state.round;
 
-          // Setup Players from Host's State (only needed for first round)
+          // ホストの状態からプレイヤーを設定（初回のみ必要）
           if (state.players) {
             this.setupPlayersFromNetwork(state.players);
           }
 
-          // Apply State
+          // 状態の適用
           this.players.forEach((p, i) => {
             const handData = state.hands[i];
             p.setHand(handData.map(d => new Card(d.type, d.id)));
@@ -144,7 +143,7 @@ export class GoitaBoard {
 
           this.renderer.render(this);
 
-          // Subscribe to game actions (for remote players including host)
+          // ゲームアクションの監視開始（ホストを含む全リモートプレイヤー用）
           if (!this.isSubscribedToActions) {
             this.network.subscribeToGameActions((action) => this.handleRemoteAction(action));
             this.isSubscribedToActions = true;
@@ -158,10 +157,10 @@ export class GoitaBoard {
   }
 
   async restoreState(state, actions) {
-    // 1. Setup Players
+    // 1. プレイヤーの設定
     if (state.players) this.setupPlayersFromNetwork(state.players);
 
-    // 2. Set Hands & Turn
+    // 2. 手札と手番の設定
     this.players.forEach((p, i) => {
       const handData = state.hands[i];
       p.setHand(handData.map(d => new Card(d.type, d.id)));
@@ -171,12 +170,12 @@ export class GoitaBoard {
 
     this.renderer.log(`状態復元: ラウンド ${this.roundCount}, 手番 P${this.turnPlayerIndex}`);
 
-    // 3. Replay Actions
+    // 3. アクションのリプレイ
     if (actions && actions.length > 0) {
       this.renderer.log(`過去のアクションをリプレイ中 (${actions.length}件)...`);
       for (const action of actions) {
-        // We use executeActionLogic directly to avoid sending to network again
-        // But we need to reconstruct Card objects
+        // 再送信を避けるため executeActionLogic を直接使用
+        // ただしカードオブジェクトの再構築が必要
         const player = this.players[action.playerIndex];
         if (action.card1) {
           const c = new Card(action.card1.type, action.card1.id);
@@ -202,25 +201,25 @@ export class GoitaBoard {
     Object.values(playersData).forEach(pData => {
       const index = pData.index;
       const p = this.players[index];
-      p.isHuman = !pData.isCpu; // Set Human/CPU flag
-      p.name = pData.name; // Store name
-      p.uid = pData.id; // STORE FIREBASE UID for permission checks
+      p.isHuman = !pData.isCpu; // 人間かどうかのフラグ
+      p.name = pData.name; // 名前の保存
+      p.uid = pData.id; // 権限チェック用にFirebase UIDを保存
 
-      // Update Renderer Names
+      // レンダラーの名前更新
       if (this.renderer.playerNames) {
         this.renderer.playerNames[index] = pData.name;
       }
 
-      // Identify Myself
+      // 自分自身の特定
       if (pData.id === this.network.playerId) {
         console.log(`Identified myself as Player ${index}`);
         this.renderer.log(`ID一致: プレイヤー ${index} として参加`);
         this.localPlayerIndex = index;
-        p.isHuman = true; // I am human
+        p.isHuman = true; // 私は人間
       }
     });
 
-    // If I am Host, I am definitely Player 0 (usually)
+    // ホストの場合、プレイヤー0であることが確定（通常）
     if (this.network.isHost) {
       this.localPlayerIndex = 0;
       console.log("I am Host (Player 0)");
@@ -242,7 +241,7 @@ export class GoitaBoard {
     this.passCount = 0;
     this.visibleKingCount = 0;
 
-    // Reset hand reveal flags for all players
+    // 全プレイヤーの手札公開フラグをリセット
     this.players.forEach(p => p.revealHand = false);
 
     this.renderer.clearField();
@@ -301,6 +300,7 @@ export class GoitaBoard {
           this.renderer.log("ホストの開始を待っています...");
         }
       } catch (e) {
+
         console.error("Next Round Error:", e);
         this.renderer.log(`エラー: ${e.message}`);
       }
@@ -313,17 +313,14 @@ export class GoitaBoard {
     for (const [type, count] of Object.entries(INITIAL_DECK_COUNTS)) {
       for (let i = 0; i < count; i++) {
         const card = new Card(type, idCounter++);
-        // If King and it's the second one (odd index or just track it), make it Jewel
+        // 王の場合、2枚目（インデックス1）を玉として扱う
         if (type === CARD_TYPES.KING) {
-          // We have 2 Kings. Let's say the one with higher ID is Jewel, or just the second one created.
-          // Since we push sequentially, we can check if we already have a King in deck?
-          // Or simpler: The loop runs twice.
           if (i === 1) card.isJewel = true;
         }
         this.deck.push(card);
       }
     }
-    // Shuffle
+    // シャッフル
     for (let i = this.deck.length - 1; i > 0; i--) {
       const j = Math.floor(Math.random() * (i + 1));
       [this.deck[i], this.deck[j]] = [this.deck[j], this.deck[i]];
@@ -340,8 +337,8 @@ export class GoitaBoard {
   }
 
   checkHandConditions() {
-    // Only Host checks conditions in Network Game (and syncs result)
-    // Or Single Player checks locally.
+    // ネットワーク対戦の場合、ホストのみが判定を行い、結果を同期する
+    // シングルプレイの場合はローカルでチェック
     if (this.isNetworkGame && !this.network.isHost) return;
 
     let shiCounts = {};
@@ -371,7 +368,7 @@ export class GoitaBoard {
       }
     });
 
-    // Check Team 5 Shi (Player 0&2 or 1&3)
+    // 味方同士の五し判定 (プレイヤー0&2 または 1&3)
     if (shiCounts[0] === 5 && shiCounts[2] === 5) {
       conditions.push({ type: 'team5shi', team: 0, score: 150 });
     }
@@ -379,14 +376,14 @@ export class GoitaBoard {
       conditions.push({ type: 'team5shi', team: 1, score: 150 });
     }
 
-    // Prioritize: Team 5 Shi > 8 Shi > 7 Shi > 6 Shi > 5 Shi
+    // 優先順位: 味方五し > 8し > 7し > 6し > 5し
     const winCondition = conditions.find(c => ['team5shi', '8shi', '7shi', '6shi'].includes(c.type));
     if (winCondition) {
       this.handleSpecialWin(winCondition);
       return;
     }
 
-    // Handle 5 Shi cases
+    // 五しの処理
     const fiveShiList = conditions.filter(c => c.type === '5shi');
     if (fiveShiList.length > 0) {
       this.handleFiveShiScenarios(fiveShiList);
@@ -396,30 +393,30 @@ export class GoitaBoard {
   handleSpecialWin(condition) {
     this.renderer.log(`特殊勝利条件: ${condition.type}`);
 
-    // Reveal the hand of the player(s) who triggered the special win
+    // 特殊勝利したプレイヤーの手札を公開
     if (condition.playerId !== undefined) {
       const player = this.players[condition.playerId];
-      player.revealHand = true; // Mark this player's hand as revealed
-      this.renderer.render(this); // Update UI to show the hand
+      player.revealHand = true; // 手札公開フラグをセット
+      this.renderer.render(this); // UI更新
     } else if (condition.type === 'team5shi') {
-      // For team 5 shi, reveal both players' hands
+      // 味方五しの場合、両方の手札を公開
       const team = condition.team;
       this.players[team].revealHand = true;
       this.players[team + 2].revealHand = true;
       this.renderer.render(this);
     }
 
-    // Delay to let UI render
+    // UI描画を待機
     setTimeout(() => {
       let winnerId = condition.playerId;
-      if (condition.type === 'team5shi') winnerId = condition.team; // Team index
+      if (condition.type === 'team5shi') winnerId = condition.team; // チームインデックス
 
-      // Update Score
+      // スコア更新
       this.teamScores[winnerId % 2] += condition.score;
       this.renderer.updateScores(this.teamScores);
 
-      // Show Result (pass condition for hand reveal info)
-      this.gameOver = true; // Round Over actually
+      // 結果表示
+      this.gameOver = true; // 実質的なラウンド終了
       this.renderer.showRoundResult(winnerId, condition.score, this.teamScores.some(s => s >= 150), condition);
 
       if (this.isNetworkGame) {
@@ -432,16 +429,16 @@ export class GoitaBoard {
     const playerIds = fiveShiList.map(c => c.playerId);
     this.renderer.log(`五し: プレイヤー ${playerIds.join(', ')}`);
 
-    // Check Team 5 Shi (both partners): Already handled above
-    // Check Enemy/Ally 5 Shi (one from each team)
+    // 味方五しは上記で処理済み
+    // 敵・味方それぞれの五し判定
     const team0Count = playerIds.filter(id => id % 2 === 0).length;
     const team1Count = playerIds.filter(id => id % 2 === 1).length;
 
     if (team0Count > 0 && team1Count > 0) {
-      // Enemy/Ally 5 Shi: Both partners must choose redeal
+      // 敵味方五し: 両方の相方が配り直しを選択する必要がある
       this.handleEnemyAllyFiveShi(fiveShiList);
     } else {
-      // Single 5 Shi: Partner decides
+      // 単独五し: 相方が判断
       this.handleSingleFiveShi(fiveShiList[0]);
     }
   }
@@ -452,20 +449,20 @@ export class GoitaBoard {
     this.renderer.log(`プレイヤー ${playerId} が「五し」。相方(P${partnerId})が判断します。`);
 
     if (!this.isNetworkGame) {
-      // In Single Player: Ask the partner
+      // シングルプレイ: 相方に尋ねる
       if (partnerId === 0) {
-        // Human partner
+        // 人間の相方
         this.renderer.showFiveShiDialog(
           () => this.redeal(),
           () => this.renderer.log("続行します。")
         );
       } else {
-        // CPU partner: Auto decide (for now, auto redeal)
+        // CPUの相方: 自動判断 (現在は配り直し)
         this.renderer.log(`CPU (P${partnerId}) が配り直しを選択しました。`);
         setTimeout(() => this.redeal(), 1000);
       }
     } else {
-      // Network: Send Event with partnerId
+      // ネットワーク: partnerIdを含むイベント送信
       this.network.sendFiveShiEvent({ ...condition, partnerId });
     }
   }
@@ -473,30 +470,30 @@ export class GoitaBoard {
   handleEnemyAllyFiveShi(fiveShiList) {
     this.renderer.log("敵・味方それぞれ一人が「五し」です。両相方が配り直しを選択した場合のみ配り直します。");
 
-    // Store pending decisions
+    // 保留中の決定を保存
     this.pendingFiveShiDecisions = {
       players: fiveShiList.map(c => c.playerId),
       decisions: {} // partnerId -> true/false
     };
 
-    // Ask each partner
+    // 各相方に確認
     fiveShiList.forEach(condition => {
       const playerId = condition.playerId;
       const partnerId = (playerId + 2) % 4;
 
       if (!this.isNetworkGame) {
         if (partnerId === 0) {
-          // Human partner
+          // 人間の相方
           this.renderer.showFiveShiDialog(
             () => this.recordFiveShiDecision(partnerId, true),
             () => this.recordFiveShiDecision(partnerId, false)
           );
         } else {
-          // CPU partner: Auto decide
+          // CPUの相方: 自動判断
           setTimeout(() => this.recordFiveShiDecision(partnerId, true), 1000);
         }
       } else {
-        // Network: Send Event
+        // ネットワーク: イベント送信
         this.network.sendFiveShiEvent({ ...condition, partnerId, isEnemyAllyScenario: true });
       }
     });
@@ -508,14 +505,14 @@ export class GoitaBoard {
     this.pendingFiveShiDecisions.decisions[partnerId] = wantsRedeal;
     this.renderer.log(`P${partnerId} が ${wantsRedeal ? '配り直し' : '続行'} を選択。`);
 
-    // Check if all decisions are in
+    // 全員の決定が揃ったか確認
     const allDecided = this.pendingFiveShiDecisions.players.every(pId => {
       const partnerId = (pId + 2) % 4;
       return this.pendingFiveShiDecisions.decisions[partnerId] !== undefined;
     });
 
     if (allDecided) {
-      // Both partners must choose redeal
+      // 両方の相方が配り直しを選択する必要がある
       const allRedeal = Object.values(this.pendingFiveShiDecisions.decisions).every(d => d === true);
       this.pendingFiveShiDecisions = null;
 
@@ -544,26 +541,26 @@ export class GoitaBoard {
     const player = this.players[this.turnPlayerIndex];
     this.renderer.highlightPlayer(this.turnPlayerIndex);
 
-    // Network Logic
+    // ネットワークロジック
     if (this.isNetworkGame) {
       const amIHost = this.network.isHost;
       const isMyTurn = (this.turnPlayerIndex === this.localPlayerIndex);
 
-      // Check if current player is NPC (controlled by Host)
-      // We rely on isHuman flag set in setupPlayersFromNetwork
-      // Note: In Network Mode, isHuman means "Real Human".
-      // So !isHuman means NPC.
+      // 現在のプレイヤーがNPCかチェック (ホストが制御)
+      // setupPlayersFromNetwork で isHuman フラグが設定されている前提
+      // 注: ネットワークモードでは isHuman は「実在の人間」を意味する
+      // なので !isHuman はNPC
 
       const isNpc = !player.isHuman;
 
       if (amIHost && isNpc) {
-        // Host controls NPC -> Proceed to AI logic
+        // ホストがNPCを制御 -> AIロジックへ
       } else if (!isMyTurn) {
-        return; // Wait for remote
+        return; // リモート待機
       }
     }
 
-    // Get action (Human input or AI)
+    // アクション取得 (人間またはAI)
     const action = await player.decideAction({
       currentAttack: this.currentAttack,
       history: []
@@ -607,15 +604,8 @@ export class GoitaBoard {
       if (cleanAction.card1) cleanAction.card1 = { type: cleanAction.card1.type, id: cleanAction.card1.id, isJewel: cleanAction.card1.isJewel };
       if (cleanAction.card2) cleanAction.card2 = { type: cleanAction.card2.type, id: cleanAction.card2.id, isJewel: cleanAction.card2.isJewel };
 
-      // 【プライバシー保護】
-      // 攻めの手番で、かつダブル（同種2枚）でない場合、1枚目のカード（受け札）は伏せカードなので内容を隠す
-      // 注: ダブルの場合は両方公開されるため隠さない
-      const isDouble = (action.card1 && action.card2 && action.card1.type === action.card2.type);
-
-      if (isLead && !isDouble) {
-        // 伏せカードとしてダミー情報を送信
-        cleanAction.card1 = { type: '?', id: -1, isJewel: false };
-      }
+      // 【修正】プライバシー保護はexecuteActionLogic内の表示処理で行うため、
+      // ネットワークには正しいデータを送信する（スコア計算や整合性チェックのため）
 
       this.renderer.logNetwork(`Sending Action: P${player.id} ${action.action}`);
       await this.network.sendGameAction(cleanAction);
@@ -646,8 +636,7 @@ export class GoitaBoard {
 
     const player = this.players[remoteAction.playerIndex];
 
-    // Reconstruct Cards
-    // Reconstruct Cards
+    // カードオブジェクトの再構築
     if (remoteAction.card1) {
       const c = new Card(remoteAction.card1.type, remoteAction.card1.id);
       c.isJewel = remoteAction.card1.isJewel;
@@ -666,7 +655,7 @@ export class GoitaBoard {
     this.nextTurn();
   }
 
-  // Separated Logic for reuse
+  // 再利用のためのロジック分離
   async executeActionLogic(player, action) {
     if (action.action === 'pass') {
       if (!this.currentAttack) {
@@ -677,6 +666,9 @@ export class GoitaBoard {
 
       if (this.passCount >= 3) {
         const winnerIndex = this.currentAttack.playerIndex;
+        // トリック終了
+        this.renderer.log("3人パス -> 場が流れました");
+        // 前回の攻撃プレイヤーが親になる
         this.finishTrick(winnerIndex);
         // trick finished, turnPlayerIndex updated inside finishTrick
       } else {
@@ -690,20 +682,20 @@ export class GoitaBoard {
       const { card1, card2 } = action;
       if (!card1 || !card2) return { valid: false, reason: "カードを2枚選んでください" };
 
-      // === KING RULE CHECK ===
-      // If attacking with King, must have at least 2 Kings in hand (including the ones being played)
+      // === 王のルール検証 ===
+      // 王で攻める場合、手札（これから出すカード含む）と場の王の合計が2枚以上必要
       if (card2.type === CARD_TYPES.KING) {
         const kingInHand = player.hand.filter(c => c.type === CARD_TYPES.KING).length;
-        // Logic: King in hand (which includes the ones we are about to play) + Visible Kings on board must be >= 2
-        // Note: card1 and card2 are still in 'hand' at this point.
+        // ロジック: 手札の王 + 場の王 >= 2
+        // 注: card1, card2はこの時点ではまだ手札にある
         if ((kingInHand + this.visibleKingCount) < 2) {
           return { valid: false, reason: "王(玉)で攻めるには、もう一枚の王(玉)が必要です (手札または場)" };
         }
       }
 
-      // Check validity based on State
+      // 状態に基づく有効性チェック
       if (!this.currentAttack) {
-        // === LEAD ===
+        // === 攻め (LEAD) ===
         player.removeCard(card1);
         player.removeCard(card2);
 
@@ -719,7 +711,8 @@ export class GoitaBoard {
         this.renderer.render(this);
 
         const isDouble = (card1.type === card2.type);
-        if (isDouble) {
+        // 【修正】ダブル（同種2枚）であっても、上がり（手札0枚）でなければ公開しない
+        if (isDouble && player.hand.length === 0) {
           this.renderer.revealLastLead(player.id, card1);
         }
 
@@ -732,12 +725,12 @@ export class GoitaBoard {
         return { valid: true };
 
       } else {
-        // === COUNTER ===
+        // === 受け (COUNTER) ===
         const attackType = this.currentAttack.card.type;
         const defType = card1.type;
 
         let validDef = (attackType === defType);
-        // King Rule
+        // 王のルール
         if (!validDef && defType === CARD_TYPES.KING) {
           if (attackType !== CARD_TYPES.pawn && attackType !== CARD_TYPES.lance) {
             validDef = true;
@@ -764,9 +757,9 @@ export class GoitaBoard {
 
         const isDouble = (card1.type === card2.type);
 
-        // Reveal the receive card if it's a double
+        // 受けのダブル（同種2枚）の場合は公開（強調表示）
         if (isDouble) {
-          // For counter, card1 is already visible (not hidden), but we highlight it
+          // 受けの場合、card1は元々公開状態（非表示ではない）だが、ダブルとして強調する
           this.renderer.revealLastReceive(player.id, card1);
         }
 
@@ -786,7 +779,7 @@ export class GoitaBoard {
     this.passCount = 0;
     this.turnPlayerIndex = winnerIndex;
     this.renderer.render(this);
-    // nextTurn() removed - called by caller
+    // nextTurn() は呼び出し元で行われる
   }
 
   async checkWin(player, isDouble = false) {
@@ -812,8 +805,8 @@ export class GoitaBoard {
       } else {
         this.renderer.showRoundResult(player.id, score, false);
       }
-      return true; // Round Ended
+      return true; // ラウンド終了
     }
-    return false; // Round continues
+    return false; // ラウンド継続
   }
 }
