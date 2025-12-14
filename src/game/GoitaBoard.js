@@ -175,6 +175,55 @@ export class GoitaBoard {
     }
   }
 
+  handleNetworkFiveShiDeclaration(data) {
+    if (data.type === 'check') {
+      if (data.playerId === this.localPlayerIndex) {
+        setTimeout(() => {
+          this.renderer.showFiveShiDialog(
+            () => {
+              this.network.sendFiveShiDeclaration({ type: 'result', playerId: this.localPlayerIndex, declared: true });
+            },
+            () => {
+              this.network.sendFiveShiDeclaration({ type: 'result', playerId: this.localPlayerIndex, declared: false });
+            }
+          );
+        }, 100);
+      } else {
+        this.renderer.log(`P${data.playerId} が五しの宣言を検討中...`);
+      }
+    } else if (data.type === 'result') {
+      if (this.network.isHost) {
+        this.handleFiveShiDeclaration(data.playerId, data.declared);
+      } else {
+        if (data.declared) this.renderer.log(`P${data.playerId} が五しを宣言しました！`);
+        else this.renderer.log(`P${data.playerId} は宣言しませんでした。`);
+      }
+    }
+  }
+
+  handleNetworkPartnerDecision(data) {
+    if (data.type === 'check') {
+      if (data.partnerId === this.localPlayerIndex) {
+        setTimeout(() => {
+          this.renderer.showPartnerRedealDialog(
+            data.declarerId,
+            () => this.network.sendPartnerDecision({ type: 'result', partnerId: this.localPlayerIndex, redeal: true }),
+            () => this.network.sendPartnerDecision({ type: 'result', partnerId: this.localPlayerIndex, redeal: false })
+          );
+        }, 100);
+      } else {
+        this.renderer.log(`P${data.partnerId} が配り直しを判断中...`);
+      }
+    } else if (data.type === 'result') {
+      if (this.network.isHost) {
+        this.handlePartnerDecision(data.partnerId, data.redeal);
+      } else {
+        const choice = data.redeal ? "配り直し" : "続行";
+        this.renderer.log(`P${data.partnerId} は ${choice} を選択しました。`);
+      }
+    }
+  }
+
   async restoreState(state, actions) {
     // 1. プレイヤーの設定
     if (state.players) this.setupPlayersFromNetwork(state.players);
