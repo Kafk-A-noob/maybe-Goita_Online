@@ -254,45 +254,37 @@ export class GoitaBoard {
       this.renderer.log(`=== ラウンド ${this.roundCount} 開始 ===`);
       this.nextTurn();
     } else {
-      // Network Round Reset
+
+      // ネットワークラウンドのリセット
       this.renderer.log("次のラウンドの準備中...");
 
-      // Prevent stale round check from blocking
-      if (this.network.isHost) {
-        // Host increments immediately to prepare next state
-        this.roundCount++;
-      } else {
-        // Guest: Do NOT increment roundCount locally. Wait for Network to tell us.
-      }
+      // ホストのみラウンド数をインクリメントする処理を削除し、一律で上部のインクリメントを使用
+      // 以前のロジックではホストが2重にインクリメントしてズレが生じていた
 
       try {
-        // 1. Set Ready for the NEXT round
-        let targetRound;
-        if (this.network.isHost) {
-          targetRound = this.roundCount; // Host already incremented
-        } else {
-          targetRound = this.roundCount + 1; // Guest still at old round
-        }
+        // 1. 次のラウンドの準備完了状態をセット (ターゲット = 現在のラウンド数)
+        // nextRound()の冒頭で既にインクリメントされているため、ホストもゲストも同じ値になるはず
+        const targetRound = this.roundCount;
 
         console.log(`Setting Ready for Round ${targetRound}`);
         await this.network.setReadyForNextRound(targetRound);
 
         if (this.network.isHost) {
           this.renderer.log("全員の準備完了を待っています...");
-          // 2. Wait for everyone to be ready for targetRound
+          // 2. 全員がターゲットラウンドの準備完了になるのを待機
           await this.network.waitForAllPlayersReady(targetRound);
 
-          // Host: Start New Round
+          // ホスト: 新しいラウンドの開始処理
           this.renderer.log(`=== ラウンド ${this.roundCount} 開始 (ホスト) ===`);
 
-          // Create new deck and deal
+          // 山札の作成と配布
           this.initDeck();
           this.deal();
 
-          // Serialize Hands for network
+          // 手札情報のシリアライズ
           const handsData = this.players.map(p => p.hand.map(c => ({ type: c.type, id: c.id })));
 
-          // Send New Round State to Guests
+          // ゲストへの初期状態送信
           this.network.setInitialState({
             hands: handsData,
             turn: this.turnPlayerIndex,
@@ -300,7 +292,7 @@ export class GoitaBoard {
             players: null
           });
 
-          // Sync Turn UID for new round
+          // 新しいラウンドの手番（書き込み権限）の同期
           this.syncTurnToNetwork();
 
           this.renderer.render(this);
@@ -602,22 +594,34 @@ export class GoitaBoard {
   }
 
   async processAction(player, action) {
-    // 1. Validate & Execute Locally
+    const isLead = !this.currentAttack; // 実行前に攻め手番かチェック
+
+    // 1. ローカルで検証・実行
     const result = await this.executeActionLogic(player, action);
 
     if (this.isNetworkGame) {
-      // 2. Send to Network
+      // 2. ネットワークへ送信
       const cleanAction = { ...action, playerIndex: player.id };
+
+      // カード情報の整形
       if (cleanAction.card1) cleanAction.card1 = { type: cleanAction.card1.type, id: cleanAction.card1.id, isJewel: cleanAction.card1.isJewel };
       if (cleanAction.card2) cleanAction.card2 = { type: cleanAction.card2.type, id: cleanAction.card2.id, isJewel: cleanAction.card2.isJewel };
+
+      // 【プライバシー保護】
+      // 攻めの手番で、かつダブル（同種2枚）でない場合、1枚目のカード（受け札）は伏せカードなので内容を隠す
+      // 注: ダブルの場合は両方公開されるため隠さない
+      const isDouble = (action.card1 && action.card2 && action.card1.type === action.card2.type);
+
+      if (isLead && !isDouble) {
+        // 伏せカードとしてダミー情報を送信
+        cleanAction.card1 = { type: '?', id: -1, isJewel: false };
+      }
 
       this.renderer.logNetwork(`Sending Action: P${player.id} ${action.action}`);
       await this.network.sendGameAction(cleanAction);
 
-      // 3. Sync Turn if Changed
-      // If I played, I am responsible for passing the turn (updating the 'turn' UID)
-      // Note: executeActionLogic updated 'this.turnPlayerIndex' already.
-      // logic: I had write permission (my turn), I wrote action. Now I write turn update.
+      // 3. 手番の変更を同期
+      // 自分がプレイした場合、手番（turn）の更新権限は自分にあるため更新を行う
       await this.syncTurnToNetwork();
     }
 

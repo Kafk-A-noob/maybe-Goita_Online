@@ -25,13 +25,13 @@ export class NetworkManager {
     }
 
     this.playerId = null;
-    this.hostId = null; // Store Host UID for CPU logic
+    this.hostId = null; // CPUロジック用ホストUID
     this.playerName = "Player";
     this.currentRoomId = null;
     this.isHost = false;
     this.roomRef = null;
 
-    // Callbacks
+    // コールバック
     this.onRoomUpdate = null; // (roomData) => {}
     this.onGameStart = null;  // () => {}
 
@@ -76,7 +76,7 @@ export class NetworkManager {
     return code;
   }
 
-  // === Room Management ===
+  // === 部屋管理 ===
 
   async createRoom(playerName) {
     if (!this.initialized) return { success: false, error: "Firebase not configured" };
@@ -101,7 +101,7 @@ export class NetworkManager {
         }
       },
       settings: { mode: 'standard' },
-      // Initialize 'turn' to Host so they can write initially
+      // 初期書き込み用にホストの手番とする
       turn: this.playerId
     };
 
@@ -188,7 +188,7 @@ export class NetworkManager {
     onValue(roomRef, (snapshot) => {
       const data = snapshot.val();
       if (data) {
-        // Update hostId if it changed (unlikely but good for safety)
+        // 安全のためホストIDが変更されれば更新
         if (data.hostId) this.hostId = data.hostId;
 
         if (this.onRoomUpdate) this.onRoomUpdate(data);
@@ -256,18 +256,18 @@ export class NetworkManager {
     await update(ref(this.db), updates);
   }
 
-  // === Game Synchronization ===
+  // === ゲーム同期 ===
 
   async setInitialState(state) {
     if (!this.currentRoomId) return;
     await set(ref(this.db, `games/${this.currentRoomId}/gameState`), state);
   }
 
-  // Update Turn in Root (Critical for Permission)
+  // ルートのturn更新（権限処理に重要）
   async updateTurn(nextPlayerUid) {
     if (!this.currentRoomId) return;
     console.log("Syncing Turn to UID:", nextPlayerUid);
-    // Because we can only write if 'turn' == MyUID, and we are changing it to nextPlayerUid.
+    // 自身のUIDがturnと一致する場合のみ書き込み可能
     await update(ref(this.db, `games/${this.currentRoomId}`), {
       turn: nextPlayerUid
     });
@@ -316,7 +316,7 @@ export class NetworkManager {
     });
   }
 
-  // === Special Events (Shi Rules) ===
+  // === 特殊イベント (五しなど) ===
 
   async sendSpecialWin(condition) {
     if (!this.currentRoomId) return;
@@ -356,7 +356,7 @@ export class NetworkManager {
     });
   }
 
-  // === Round Synchronization ===
+  // === ラウンド同期 ===
 
   async setReadyForNextRound(roundNumber) {
     if (!this.currentRoomId) return;
@@ -375,7 +375,7 @@ export class NetworkManager {
         const players = snapshot.val() || {};
         const allReady = Object.values(players).every(p => {
           if (p.isCpu) return true;
-          // Check if player is ready for the SPECIFIC target round (or higher)
+          // 特定のターゲットラウンド以上で準備完了か確認
           return (p.readyForRound && p.readyForRound >= targetRound);
         });
 
@@ -390,18 +390,18 @@ export class NetworkManager {
     });
   }
 
-  // Modal closed notification (no turn permission required)
+  // モーダル閉鎖通知 (手番権限不要)
   async setModalClosed() {
     if (!this.currentRoomId) return;
     const { set, ref } = await import("firebase/database");
-    // Use a separate node that doesn't require turn permission
+    // 手番権限が不要な別のノードを使用
     await set(ref(this.db, `games/${this.currentRoomId}/modalStatus/${this.playerId}`), {
       closed: true,
       timestamp: Date.now()
     });
   }
 
-  // Host: Wait for all players to close modal
+  // ホスト: 全員のモーダル閉鎖待機
   async waitForAllModalsClosed() {
     const { get, ref, onValue } = await import("firebase/database");
 
@@ -412,11 +412,11 @@ export class NetworkManager {
       unsubscribe = onValue(modalRef, async (snapshot) => {
         const modalStatuses = snapshot.val() || {};
 
-        // Get current players
+        // 現在のプレイヤーを取得
         const playersSnap = await get(ref(this.db, `games/${this.currentRoomId}/players`));
         const players = playersSnap.val() || {};
 
-        // Check if all non-CPU players have closed their modals
+        // CPU以外の全プレイヤーが閉じたか確認
         const allClosed = Object.values(players).every(p => {
           if (p.isCpu) return true;
           return modalStatuses[p.id] && modalStatuses[p.id].closed;
@@ -424,7 +424,7 @@ export class NetworkManager {
 
         if (allClosed) {
           if (unsubscribe) unsubscribe();
-          // Clear modal statuses for next round
+          // 次のラウンド用にステータスをクリア
           const { set } = await import("firebase/database");
           await set(ref(this.db, `games/${this.currentRoomId}/modalStatus`), null);
           resolve();
