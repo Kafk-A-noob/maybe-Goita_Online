@@ -121,10 +121,14 @@ export class GoitaBoard {
       if (!this.initialStateSubscribed) {
         this.network.subscribeToInitialState((state) => {
           // This callback will fire for EVERY round (round 1, 2, 3...)
-          if (state.round !== this.roundCount) {
-            console.log(`Waiting for round ${this.roundCount}, got ${state.round}`);
+          if (state.round < this.roundCount) {
+            // Ignore old state
+            console.log(`Ignoring old round state: ${state.round} (Current: ${this.roundCount})`);
             return;
           }
+
+          // Update local round count to match network (Sync up)
+          this.roundCount = state.round;
 
           // Setup Players from Host's State (only needed for first round)
           if (state.players) {
